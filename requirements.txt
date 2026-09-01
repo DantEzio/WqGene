@@ -1,0 +1,27 @@
+# AI-Bio Project Dependencies
+# =========================
+
+# Deep Learning Framework
+torch>=2.0.0
+
+# Data Processing
+pandas>=2.0.0
+numpy>=1.24.0
+openpyxl>=3.1.0          # Excel (.xlsx) file support for pandas
+
+# Data Visualization
+matplotlib>=3.7.0
+
+# Statistical Analysis
+scipy>=1.10.0
+scikit-learn>=1.3.0
+
+# SHAP Interpretability
+shap>=0.42.0             # SHAP value computation for model interpretation
+
+# Sobol Sensitivity Analysis
+SALib>=1.4.7             # Sobol sensitivity analysis (results3_geneSobo.py)
+
+# Optional Dependencies
+ipython>=8.0.0
+notebook>=6.0.0
