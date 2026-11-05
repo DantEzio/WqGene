@@ -1,0 +1,65 @@
+Loaded Gene training history
+  Keys: ['train_loss', 'val_loss', 'lr_history']
+Loaded LSTM training history
+  Keys: ['train_loss', 'val_loss', 'lr_history']
+Loaded MLP training history
+  Keys: ['train_loss', 'val_loss', 'lr_history']
+
+Gene Model Prediction Statistics:
+  Number of samples: 9950
+  Mean MSE: 0.000953
+  Std MSE: 0.004335
+  Min MSE: 0.000025
+  Max MSE: 0.105094
+
+LSTM Model Prediction Statistics:
+  Number of samples: 9950
+  Mean MSE: 0.002526
+  Std MSE: 0.007868
+  Min MSE: 0.000139
+  Max MSE: 0.155918
+
+MLP Model Prediction Statistics:
+  Number of samples: 9950
+  Mean MSE: 0.008294
+  Std MSE: 0.010671
+  Min MSE: 0.000353
+  Max MSE: 0.198473
+Successfully read 14253 dates from wq.xlsx
+
+===== Normalizing Time Indices Across Models =====
+  Unified dataset end index: 14212
+Calculated Gene model absolute errors: 9950 data points
+  Gene: unified absolute time index 4263 - 14212 (9950 points, time range identical across models)
+Calculated Bollinger Bands for Gene model
+Calculated LSTM model absolute errors: 9950 data points
+  LSTM: unified absolute time index 4263 - 14212 (9950 points, time range identical across models)
+Calculated Bollinger Bands for LSTM model
+Calculated MLP model absolute errors: 9950 data points
+  MLP: unified absolute time index 4263 - 14212 (9950 points, time range identical across models)
+Calculated Bollinger Bands for MLP model
+
+WqGene (V2) Statistics:
+  Total epochs: 300
+  Final train loss: 0.001571
+  Final val loss: 0.002157
+  Best val loss: 0.001941
+  Best epoch: 297
+
+LSTM Statistics:
+  Total epochs: 729
+  Final train loss: 0.005732
+  Final val loss: 0.002496
+  Best val loss: 0.002393
+  Best epoch: 579
+
+MLP Statistics:
+  Total epochs: 218
+  Final train loss: 0.021362
+  Final val loss: 0.018588
+  Best val loss: 0.017624
+  Best epoch: 68
+
+[SUCC] Model performance comparison saved: results\model_performance_comparison.png
+
+[SUCC] All models processed successfully!

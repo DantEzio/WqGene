@@ -1,3 +1,26 @@
+"""
+results4_trans_shaply.py - gene SHAP sensitivity analysis of the transfer-learned models
+=========================================================
+Purpose:
+    compute the SHAP values of the gene input dims for each checkpoint saved during transfer learning
+    SHAP contributions, used to track how gene importance evolves along the transfer steps:
+    1) Extract the gene projection sub-model from the full GeneModel and wrap it for SHAP
+    2) Use the background sample mean as the baseline and compute SHAP values for each time-step checkpoint
+    3) Each checkpoint writes a SHAP summary figure and that step's feature importance CSV
+    4) The output feeds results5_trans_SHAPPDP_heatmap.py (heatmap) and
+       consumed further by results7_top10gene.py (Top10 genes)
+Input:
+    .pth checkpoints under step1_gene_model_trans_2block_FullTL/model/...
+    gene_ref/Gene_info.xlsx (KEGG ID -> gene name mapping)
+Output:
+    results/Shapely for trans/step_{N}/SHAP_*.png
+    results/Shapely for trans/step_{N}/SHAP_feature_importance_{model}.csv
+Usage:
+    python results4_trans_shaply.py         # run from the project root (SHAP is computationally heavy)
+Note:
+    results4_trans_PDP.py is the PDP version of the same workflow; both produce interchangeable outputs
+"""
+
 import torch
 import torch.nn as nn
 import numpy as np
@@ -20,8 +43,8 @@ torch.cuda.manual_seed_all(42)
 import shap
 
 # Add step1_gene_model_trans_2block directory to Python path
-sys.path.append(os.path.join(os.path.dirname(__file__), 'step1_gene_model_trans_2block'))
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'step1_gene_model_trans_2block'))
+sys.path.append(os.path.join(os.path.dirname(__file__), 'step1_gene_model_trans_2block_FullTL'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'step1_gene_model_trans_2block_FullTL'))
 
 from gene_model import GeneModel
 
@@ -47,16 +70,16 @@ def extract_gene_projection_models(gene_model, device):
         def forward(self, x):
             return self.proj(x)
 
-    # ★ 2block模型: ana_ano合并(输出6维), ox(输出3维)
+    # 2block model: ana_ano merged (6-dim output), ox (3-dim output)
     gene_n_dim = 21
     hidden_dim = 64
     
     models = {
-        'ana_ano': GeneProjModel(gene_n_dim, hidden_dim, 6).to(device),  # ★ 合并ANA+ANO，输出6维
+        'ana_ano': GeneProjModel(gene_n_dim, hidden_dim, 6).to(device),  # ANA+ANO merged, 6-dim output
         'ox': GeneProjModel(gene_n_dim, hidden_dim, 3).to(device)
     }
 
-    # Copy weights from trained gene model for ana_ano (★ 2block新层名)
+    # Copy the weights of the trained gene model for ana_ano (2block layer names)
     ana_ano_state_dict = models['ana_ano'].state_dict()
     gene_ana_ano_state_dict = gene_model.gene_n_proj_ana_ano.state_dict()
     for key in ana_ano_state_dict.keys():
@@ -64,7 +87,7 @@ def extract_gene_projection_models(gene_model, device):
             ana_ano_state_dict[key] = gene_ana_ano_state_dict[key]
     models['ana_ano'].load_state_dict(ana_ano_state_dict)
 
-    # Copy weights for ox (层名不变)
+    # Copy the weights for ox (layer names unchanged)
     ox_state_dict = models['ox'].state_dict()
     gene_ox_state_dict = gene_model.gene_n_proj_ox.state_dict()
     for key in ox_state_dict.keys():
@@ -76,18 +99,18 @@ def extract_gene_projection_models(gene_model, device):
 
 
 def create_model_wrapper(model, device):
-    """Create model wrapper for SHAP analysis (★ 2block: 适配不同输出维度)"""
+    """Create a model wrapper for SHAP analysis (2block: adapts to different output dims)"""
     def model_wrapper(x):
         x_tensor = torch.tensor(x, dtype=torch.float32).to(device)
         with torch.no_grad():
             output = model(x_tensor)
-        # ★ 返回所有输出的均值（适配ana_ano的6维和ox的3维）
+        # Return the mean over all outputs (handles the 6 dims of ana_ano and the 3 dims of ox)
         return np.mean(output.cpu().numpy(), axis=1, keepdims=True)  # Shape: (n_samples, 1)
     return model_wrapper
 
 
 def collect_shap_results(models, device):
-    """Collect SHAP analysis results for all models with 50 runs (★ 2block适配)"""
+    """Collect SHAP analysis results for all models with 50 runs (2block adapted)"""
     all_results = {}
     gene_names = get_actual_gene_names()
     num_runs = 50
@@ -105,9 +128,9 @@ def collect_shap_results(models, device):
             test_data = np.random.uniform(-1, 1, size=(100, 21))
             shap_values = explainer.shap_values(test_data, nsamples='auto')
 
-            # ★ 2block: 简化处理，统一取绝对值均值
+            # 2block: simplified handling, always take the mean of absolute values
             if isinstance(shap_values, list):
-                # 多输出情况
+                # Multi-output case
                 for sv in shap_values:
                     if isinstance(sv, np.ndarray) and sv.ndim == 2:
                         feature_importance = np.mean(np.abs(sv), axis=0)
@@ -141,7 +164,7 @@ def get_actual_gene_names():
     if os.path.exists(gene_file):
         try:
             df = pd.read_excel(gene_file, sheet_name='ana_ano')
-            # 最后一列是 KEGG 描述，提取 K 开头编号
+            # The last column holds the KEGG description; extract the K-prefixed id
             kegg_ids = df.iloc[:, -1].astype(str).str.extract(r'(K\d+)')[0]
             kegg_ids = kegg_ids.dropna().tolist()
             gene_names = kegg_ids[:21]
@@ -170,16 +193,16 @@ def plot_shap_results(all_results, output_dir):
     label_size = 18
     tick_label_size = 12
 
-    model_names = ['ana_ano', 'ox']  # ★ 2block: 合并ANA+ANO
+    model_names = ['ana_ano', 'ox']  # 2block: ANA+ANO merged
     model_labels = {
-        'ana_ano': 'ANA+ANO (Anaerobic + Anoxic Tank)',  # ★ 2block新标签
+        'ana_ano': 'ANA+ANO (Anaerobic + Anoxic Tank)',  # 2block new label
         'ox': 'OX (Aerobic Tank)'
     }
 
-    plt.figure(figsize=(15, 12))  # ★ 调整高度适应2行
+    plt.figure(figsize=(15, 12))  # adjust the height for 2 rows
 
     for i, model_name in enumerate(model_names):
-        plt.subplot(2, 1, i + 1)  # ★ 从3行改为2行
+        plt.subplot(2, 1, i + 1)  # 3 rows reduced to 2
         results = all_results[model_name]
         mean_feature_importance = results['mean_feature_importance']
         gene_names = results['gene_names']
@@ -212,7 +235,7 @@ def plot_shap_results(all_results, output_dir):
 
 def save_shap_csv(all_results, output_dir):
     """Save SHAP feature importance to CSV files"""
-    for model_name in ['ana_ano', 'ox']:  # ★ 2block模型名
+    for model_name in ['ana_ano', 'ox']:  # 2block model names
         results = all_results[model_name]
         mean_feature_importance = results['mean_feature_importance']
         gene_names = results['gene_names']
@@ -329,12 +352,12 @@ def main():
     """Main function for batch SHAP analysis on transfer learning models"""
 
     # Configuration
-    FIRST_STEP = 4314       # First model step number: in round one 4264
+    FIRST_STEP = 4264       # First model step number: in round one 4314 or 4264
     INTERVAL = 100          # Select every Nth model
     
     # Paths
     model_dir = os.path.join(
-        'step1_gene_model_trans_2block', 'model', 'gene_model_transfer_learning'  # ★ 2block路径
+        'step1_gene_model_trans_2block', 'model', 'gene_model_transfer_learning'  # 2block path
     )
     base_output_dir = os.path.join('results', 'Shapely for trans')
 

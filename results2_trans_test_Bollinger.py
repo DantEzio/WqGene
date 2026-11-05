@@ -1,3 +1,23 @@
+"""
+results2_trans_test_Bollinger.py - multi-model performance comparison in the transfer stage
+=========================================================
+Purpose:
+    the same analysis framework as results1, but applied to the transfer-learning results:
+    1) Error statistics of the three models (Gene / LSTM / MLP) on the transfer test set
+    2) Adaptive Bollinger bands of the absolute error (rolling window of +/-num_std standard deviations)
+    3) MSE distribution of each model (histogram + KDE) and mean/variance comparison
+Input:
+    prediction_paths:
+        step1_gene_model_trans_2block_FullTL/results/
+            gene_model_transfer_learning/prediction.csv
+        step1_LSTM_model_trans/results/LSTM_model_transfer_learning/prediction.csv
+        step1_MLP_model_trans/results/MLP_model_transfer_learning/prediction.csv
+Output:
+    results/model_transfer_performance_comparison.png
+Usage:
+    python results2_trans_test_Bollinger.py    # run from the project root
+"""
+
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
@@ -9,20 +29,21 @@ from scipy import stats
 # Set environment variable to suppress OpenMP error
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 
-# 字体设置
+# Font setup
 config = {
             "font.family": 'serif',
-            "font.size": 12,# 相当于小四大小
-            "mathtext.fontset": 'stix',#matplotlib渲染数学字体时使用的字体，和Times New Roman差别不大
-            "font.serif": ['Arial'],#['Times New Roman'],#宋体
-            'axes.unicode_minus': False # 处理负号，即-号
+            "font.size": 12,# roughly 12pt body text
+            "mathtext.fontset": 'stix',# math font used by matplotlib, close to Times New Roman
+            "font.serif": ['Arial'],#['Times New Roman'],#'SimSun'
+            'axes.unicode_minus': False # handle the minus sign
          }
 rcParams.update(config)
 label_size = 18
 
 # Define transfer learning prediction paths
+# Gene uses the transfer-learning result of the V2 comparison model (no gene embedding + gene reconstruction head)
 prediction_paths = {
-    'Gene': 'step1_gene_model_trans_2block/results/gene_model_transfer_learning/prediction.csv',
+    'Gene': 'step1_gene_model_trans_2block_FullTL/results/gene_model_transfer_learning/prediction.csv',
     'LSTM': 'step1_LSTM_model_trans/results/LSTM_model_transfer_learning/prediction.csv',
     'MLP': 'step1_MLP_model_trans/results/MLP_model_transfer_learning/prediction.csv'
 }
@@ -57,22 +78,22 @@ for model_name, path in prediction_paths.items():
 results_dir = 'results'
 os.makedirs(results_dir, exist_ok=True)
 
-# Define colors for each model
+# Colors per model (blues, dark to light: Gene > LSTM > MLP)
 model_colors = {
     'Gene': {
-        'hist': '#6baed6',     # 柱状图颜色
-        'bb_fill': '#aec7e8',  # Bollinger Bands填充颜色
-        'bb_line': '#1f77b4'   # Bollinger Bands中线颜色
+        'hist': '#3182bd',     # bar color
+        'bb_fill': '#9ecae1',  # Bollinger band fill color
+        'bb_line': '#08306b'   # Bollinger band middle-line color
     },
     'LSTM': {
-        'hist': '#fd8d3c',     # 柱状图颜色
-        'bb_fill': '#ff9896',  # Bollinger Bands填充颜色
-        'bb_line': '#d62728'   # Bollinger Bands中线颜色
+        'hist': '#6baed6',     # bar color
+        'bb_fill': '#c6dbef',  # Bollinger band fill color
+        'bb_line': '#2171b5'   # Bollinger band middle-line color
     },
     'MLP': {
-        'hist': '#74c476',     # 柱状图颜色
-        'bb_fill': '#98df8a',  # Bollinger Bands填充颜色
-        'bb_line': '#2ca02c'   # Bollinger Bands中线颜色
+        'hist': '#c6dbef',     # bar color
+        'bb_fill': '#deebf7',  # Bollinger band fill color
+        'bb_line': '#6baed6'   # Bollinger band middle-line color
     }
 }
 
@@ -225,7 +246,7 @@ gs = GridSpec(3, 2, figure=fig, hspace=0.4, wspace=0.3)
 
 # Plot each model
 model_names = ['Gene', 'LSTM', 'MLP']
-titles = ['WqGene_Trans', 'LSTM_Trans', 'MLP_Trans']
+titles = ['WqGene-LL', 'LSTM-LL', 'MLP-LL']
 
 for idx, (model_name, title) in enumerate(zip(model_names, titles)):
     # Plot MSE probability density on the left (column 0)
@@ -256,7 +277,7 @@ for idx, (model_name, title) in enumerate(zip(model_names, titles)):
         
         # Set labels, title and x-axis limit
         ax_hist.set_xlabel('MSE', fontsize=label_size)
-        ax_hist.set_ylabel('Probability Density', fontsize=label_size)  # ★ 所有行都显示ylabel
+        ax_hist.set_ylabel('Probability Density', fontsize=label_size)  # show the ylabel on every row
         ax_hist.set_xlim(0, 0.06)
         ax_hist.set_title(f'{title} MSE Distribution (0-0.06)', fontsize=label_size, fontweight='bold')
         
@@ -275,7 +296,7 @@ for idx, (model_name, title) in enumerate(zip(model_names, titles)):
         ax_hist.text(0.5, 0.5, f'{title}\nPrediction data not found', 
                      ha='center', va='center', fontsize=12, transform=ax_hist.transAxes)
         ax_hist.set_xlabel('MSE', fontsize=14)
-        ax_hist.set_ylabel('Probability Density', fontsize=14)  # ★ 所有行都显示ylabel
+        ax_hist.set_ylabel('Probability Density', fontsize=14)  # show the ylabel on every row
         ax_hist.set_title(f'{title} MSE Distribution', fontsize=13, fontweight='bold')
         ax_hist.grid(True, alpha=0.15)
     

@@ -1,3 +1,21 @@
+"""
+train_LSTM_model.py - train the LSTM baseline (source domain, step1)
+=========================================================
+Purpose:
+    train an LSTM reference model on the WQ sequence alone to measure the gain of adding gene information over GeneModel:
+    1) Call LSTM_model.prepare_data() to build the train/val/test splits
+    2) Adam optimization, LR scheduling and early stopping, saving the best validation weights
+    3) Record the train/val loss and LR curves and save the test-set predictions
+Key parameters:
+    batch_size = 256, hidden_dim = 64, dropout = 0.3, num_epochs = 3000
+Output:
+    model/LSTM_model/best_LSTM_model.pth           best weights
+    model/LSTM_model/training_history_with_lr.npy  training history
+    results/LSTM_model/training_with_lr_history.png, prediction.csv
+Usage:
+    cd step1_LSTM_model_trans && python train_LSTM_model.py
+"""
+
 import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader
@@ -25,8 +43,8 @@ def train_model():
     dataset = WaterQualityDataset(wq_data, labels_dict, window_size=40)
     
     # Split dataset using indices
-    train_size = int(0.3 * len(dataset))  # 前0%-30%的数据
-    val_size = int(0.1 * len(dataset))  # 30%-35%的数据
+    train_size = int(0.3 * len(dataset))  # the first 0%-30% of the data
+    val_size = int(0.1 * len(dataset))  # the 30%-40% of the data
     test_size = len(dataset) - train_size - val_size
     
     # Use Subset to select data by indices

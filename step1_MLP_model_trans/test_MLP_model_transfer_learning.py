@@ -11,17 +11,17 @@ np.random.seed(42)
 torch.manual_seed(42)
 
 def compute_fisher_information(model, dataloader, device):
-    """计算 Fisher 信息矩阵"""
+    """Compute the Fisher information matrix"""
     fisher_dict = {}
     param_names = []
     
-    # 收集所有参数的名称
+    # Collect the names of all parameters
     for name, param in model.named_parameters():
         if param.requires_grad:
             fisher_dict[name] = torch.zeros_like(param)
             param_names.append(name)
     
-    # 计算梯度
+    # Compute the gradients
     model.eval()
     for batch in dataloader:
         t_inf, t_ana, t_ano, t_ox, t_eff, t_labels = batch
@@ -58,7 +58,7 @@ def compute_fisher_information(model, dataloader, device):
     return fisher_dict
 
 def ewc_loss(model, fisher_dict, optimal_params, ewc_lambda=1000):
-    """计算 EWC 损失"""
+    """Compute the EWC loss"""
     ewc_loss_val = 0
     
     for name, param in model.named_parameters():
@@ -158,12 +158,12 @@ def test_transfer_learning():
         print(f"EWC lambda: {ewc_lambda}")
 
         # Split dataset using same indices as test_gene_model
-        train_size = int(0.3 * len(dataset))  # 前0%-30%的数据
-        val_size = int(0.1 * len(dataset))  # 30%-35%的数据
+        train_size = int(0.3 * len(dataset))  # the first 0%-30% of the data
+        val_size = int(0.1 * len(dataset))  # the 30%-40% of the data
         
         # Test data starts from 30% of data (train_size)
         start_idx = train_size
-        test_size = len(dataset) - start_idx  # 70%的数据
+        test_size = len(dataset) - start_idx  # 70% of the data
         
         print(f"Test data size: {test_size} samples (from {start_idx+1} to {len(dataset)})")
         print(f"  Total samples: {len(dataset)}")
@@ -365,14 +365,14 @@ def test_transfer_learning():
         prediction_df = pd.DataFrame(prediction_data)
         prediction_path = os.path.join(results_dir, "prediction.csv")
         prediction_df.to_csv(prediction_path, index=False)
-        print(f"✅ Predictions saved: {prediction_path}")
+        print(f"Predictions saved: {prediction_path}")
         
         # Save Bollinger Bands data to CSV
         if bollinger_bands:
             bb_df = pd.DataFrame(bollinger_bands)
             bb_path = os.path.join(results_dir, "bollinger_bands.csv")
             bb_df.to_csv(bb_path, index=False)
-            print(f"✅ Bollinger Bands saved: {bb_path}")
+            print(f"Bollinger Bands saved: {bb_path}")
 
         # Generate prediction vs real regression plot
         print("\nGenerating prediction vs real regression plot...")
@@ -401,7 +401,7 @@ def test_transfer_learning():
             regression_plot_path = os.path.join(results_dir, "prediction_vs_real.png")
             plt.savefig(regression_plot_path)
             plt.close()
-            print(f"✅ Regression plot saved: {regression_plot_path}")
+            print(f"Regression plot saved: {regression_plot_path}")
         except Exception as e:
             print(f"Error generating regression plot: {e}")
 
@@ -431,7 +431,7 @@ def test_transfer_learning():
             time_series_plot_path = os.path.join(results_dir, "time_series_prediction.png")
             plt.savefig(time_series_plot_path)
             plt.close()
-            print(f"✅ Time series plot saved: {time_series_plot_path}")
+            print(f"Time series plot saved: {time_series_plot_path}")
         except Exception as e:
             print(f"Error generating time series plot: {e}")
 
@@ -456,11 +456,11 @@ def test_transfer_learning():
         mse_path = os.path.join(results_dir, "mse_scores.csv")
         try:
             mse_df.to_csv(mse_path, index=False)
-            print(f"✅ MSE scores saved: {mse_path}")
+            print(f"MSE scores saved: {mse_path}")
         except Exception as e:
             print(f"Error saving MSE scores: {e}")
 
-        print("\n🎉 Transfer learning test completed successfully!")
+        print("\n Transfer learning test completed successfully!")
         print(f"Results summary:")
         print(f"- Model: MLP Model with Transfer Learning and EWC")
         print(f"- Test samples: {test_size} (from {start_idx+1} to {len(dataset)}, 30%-100% of data)")

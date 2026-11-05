@@ -1,3 +1,21 @@
+"""
+results1_training_test_Bollinger.py - multi-model performance comparison in the training/test stage
+=========================================================
+Purpose:
+    compare the Gene / LSTM / MLP models on the original (non-transfer) dataset in one paper-level figure:
+    1) Training process: loss curve plus learning rate decay curve
+    2) Adaptive Bollinger bands of the absolute error (rolling window of window_size steps, +/-num_std standard deviations,
+       used to spot error spikes / abnormal periods)
+    3) MSE distribution of each model (histogram + KDE) plus overall statistics
+Input:
+    model_paths     : step1_*/.../training_history_with_lr.npy (contains the loss / lr keys)
+    prediction_paths: step1_*/.../prediction.csv (real columns contain true/real, prediction columns contain pred)
+Output:
+    results/model_performance_comparison.png
+Usage:
+    python results1_training_test_Bollinger.py    # run from the project root
+"""
+
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
@@ -9,27 +27,29 @@ from scipy import stats
 # Set environment variable to suppress OpenMP error
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 
-# 字体设置
+# Font setup
 config = {
             "font.family": 'serif',
-            "font.size": 12,# 相当于小四大小
-            "mathtext.fontset": 'stix',#matplotlib渲染数学字体时使用的字体，和Times New Roman差别不大
-            "font.serif": ['Arial'],#['Times New Roman'],#宋体
-            'axes.unicode_minus': False # 处理负号，即-号
+            "font.size": 12,# roughly 12pt body text
+            "mathtext.fontset": 'stix',# math font used by matplotlib, close to Times New Roman
+            "font.serif": ['Arial'],#['Times New Roman'],#'SimSun'
+            'axes.unicode_minus': False # handle the minus sign
          }
 rcParams.update(config)
 label_size = 18
 
 # Define model paths
+# Gene uses the V2 comparison model (no gene embedding + gene reconstruction head)
 model_paths = {
-    'Gene': 'step1_gene_model_trans_2block/model/gene_model/training_history_with_lr.npy',
+    'Gene': 'step1_gene_model_trans_2block_FullTL/results/gene_model/training_history_with_lr.npy',
     'LSTM': 'step1_LSTM_model_trans/model/LSTM_model/training_history_with_lr.npy',
     'MLP': 'step1_MLP_model_trans/model/MLP_model/training_history_with_lr.npy'
 }
 
 # Define prediction paths
+# Gene uses the V2 comparison model result (time_step is the absolute index 4263-14212, same as LSTM/MLP)
 prediction_paths = {
-    'Gene': 'step1_gene_model_trans_2block/results/gene_model/prediction.csv',
+    'Gene': 'step1_gene_model_trans_2block_FullTL/results/gene_model/prediction.csv',
     'LSTM': 'step1_LSTM_model_trans/results/LSTM_model/prediction.csv',
     'MLP': 'step1_MLP_model_trans/results/MLP_model/prediction.csv'
 }
@@ -79,28 +99,28 @@ os.makedirs(results_dir, exist_ok=True)
 fig = plt.figure(figsize=(18, 12))
 gs = GridSpec(3, 3, figure=fig, hspace=0.4, wspace=0.3)
 
-# Define colors for each model
+# Colors per model (blues, dark to light: Gene > LSTM > MLP)
 model_colors = {
     'Gene': {
-        'train': '#1f77b4',  # 深蓝色
-        'val': '#aec7e8',      # 浅蓝色
-        'hist': '#6baed6',     # 柱状图颜色
-        'bb_fill': '#aec7e8',  # Bollinger Bands填充颜色
-        'bb_line': '#1f77b4'   # Bollinger Bands中线颜色
+        'train': '#08306b',  # darkest blue
+        'val': '#9ecae1',      # light blue
+        'hist': '#3182bd',     # bar color
+        'bb_fill': '#9ecae1',  # Bollinger band fill color
+        'bb_line': '#08306b'   # Bollinger band middle-line color
     },
     'LSTM': {
-        'train': '#d62728',  # 深粉红色
-        'val': '#ff9896',      # 浅粉红色
-        'hist': '#fd8d3c',     # 柱状图颜色
-        'bb_fill': '#ff9896',  # Bollinger Bands填充颜色
-        'bb_line': '#d62728'   # Bollinger Bands中线颜色
+        'train': '#2171b5',  # medium blue
+        'val': '#c6dbef',      # pale blue
+        'hist': '#6baed6',     # bar color
+        'bb_fill': '#c6dbef',  # Bollinger band fill color
+        'bb_line': '#2171b5'   # Bollinger band middle-line color
     },
     'MLP': {
-        'train': '#2ca02c',   # 深绿色
-        'val': '#98df8a',      # 浅绿色
-        'hist': '#74c476',     # 柱状图颜色
-        'bb_fill': '#98df8a',  # Bollinger Bands填充颜色
-        'bb_line': '#2ca02c'   # Bollinger Bands中线颜色
+        'train': '#6baed6',   # light blue
+        'val': '#c6dbef',      # pale blue
+        'hist': '#c6dbef',     # bar color
+        'bb_fill': '#deebf7',  # Bollinger band fill color
+        'bb_line': '#6baed6'   # Bollinger band middle-line color
     }
 }
 
@@ -180,47 +200,37 @@ def get_actual_dates():
 # Get actual dates
 actual_dates = get_actual_dates()
 
-def generate_date_sequence_for_model(model_name, path, num_points):
-    """Generate date sequence based on actual dates from wq.xlsx"""
-    if actual_dates is None:
-        # Fallback to default date generation
-        start = datetime.strptime('2025-05-30', '%Y-%m-%d')
-        return [start + timedelta(days=i) for i in range(num_points)]
-    
+# Unified time index (the old time alignment / intersection trimming is removed; no data is dropped):
+#  all three test segments end at the dataset tail, so aligning the max time_step of each file
+#  aligning every series to the same end point yields one unified absolute time index:
+#    gene   (relative index 0-9949)     -> absolute index 4263-14212
+#    LSTM/MLP (absolute index 4263-14212) -> absolute index 4263-14212
+#  this makes the gene / LSTM / MLP error curves identical in time range and length (9950 points each)
+print("\n===== Normalizing Time Indices Across Models =====")
+model_raw_steps = {}
+for model_name, path in prediction_paths.items():
     try:
-        # Read the prediction file to get time_steps
         df_pred = pd.read_csv(path)
         if 'time_step' in df_pred.columns:
-            # Get the time_steps from prediction file
-            time_steps = df_pred['time_step'].tolist()
-            print(f"Found {len(time_steps)} time_steps in {model_name} prediction file")
-            
-            # Map time_steps to actual dates
-            model_dates = []
-            for step in time_steps:
-                if step < len(actual_dates):
-                    model_dates.append(actual_dates[step])
-                else:
-                    # If step is out of range, use the last date + delta
-                    if model_dates:
-                        last_date = model_dates[-1]
-                        model_dates.append(last_date + timedelta(minutes=15))
-                    else:
-                        # Fallback if no dates found
-                        start = datetime.strptime('2025-05-30', '%Y-%m-%d')
-                        model_dates.append(start + timedelta(days=step))
-            
-            print(f"Generated {len(model_dates)} dates for {model_name} model")
-            return model_dates
-        else:
-            # Fallback if no time_step column
-            start = datetime.strptime('2025-05-30', '%Y-%m-%d')
-            return [start + timedelta(days=i) for i in range(num_points)]
+            model_raw_steps[model_name] = df_pred['time_step'].tolist()
     except Exception as e:
-        print(f"Error generating dates for {model_name}: {e}")
-        # Fallback
-        start = datetime.strptime('2025-05-30', '%Y-%m-%d')
-        return [start + timedelta(days=i) for i in range(num_points)]
+        print(f"  {model_name}: Error reading time_step - {e}")
+
+dataset_end = max((max(ts) for ts in model_raw_steps.values()), default=None)
+print(f"  Unified dataset end index: {dataset_end}")
+
+def generate_dates_from_steps(abs_steps):
+    """Map the unified absolute time index to actual dates in wq.xlsx"""
+    dates = []
+    for step in abs_steps:
+        if actual_dates is not None and step < len(actual_dates):
+            dates.append(actual_dates[step])
+        elif dates:
+            dates.append(dates[-1] + timedelta(minutes=15))
+        else:
+            start = datetime.strptime('2025-05-30', '%Y-%m-%d')
+            dates.append(start + timedelta(days=step))
+    return dates
 
 # First pass: calculate errors and generate dates for all models
 for model_name, path in prediction_paths.items():
@@ -229,9 +239,17 @@ for model_name, path in prediction_paths.items():
         model_absolute_errors[model_name] = errors
         print(f"Calculated {model_name} model absolute errors: {len(errors)} data points")
         
-        # Generate date sequence based on actual dates
-        dates = generate_date_sequence_for_model(model_name, path, len(errors))
+        # Unified absolute time index (the relative gene numbering becomes 4263-14212)
+        raw_steps = model_raw_steps.get(model_name)
+        if raw_steps is not None and dataset_end is not None:
+            offset = dataset_end - max(raw_steps)
+            abs_steps = [s + offset for s in raw_steps]
+        else:
+            abs_steps = list(range(len(errors)))
+        dates = generate_dates_from_steps(abs_steps)
         model_dates[model_name] = dates
+        print(f"  {model_name}: unified absolute time index {abs_steps[0]} - {abs_steps[-1]} "
+              f"({len(abs_steps)} points, time range identical across models)")
         
         # Calculate Bollinger Bands
         upper, middle, lower = calculate_bollinger_bands(errors)
@@ -249,58 +267,9 @@ for model_name, path in prediction_paths.items():
     else:
         print(f"Failed to calculate {model_name} model absolute errors")
 
-# ★ Align time ranges across all models to ensure consistent x-axis
-print("\n===== Aligning Time Ranges Across Models =====")
-if len(model_dates) >= 2:
-    # Find the common date range (intersection of all models' date ranges)
-    all_start_dates = []
-    all_end_dates = []
-    
-    for model_name, dates in model_dates.items():
-        if dates and len(dates) > 0:
-            # Convert to datetime for comparison
-            try:
-                start_date = pd.to_datetime(dates[0])
-                end_date = pd.to_datetime(dates[-1])
-                all_start_dates.append((model_name, start_date))
-                all_end_dates.append((model_name, end_date))
-                print(f"  {model_name}: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')} ({len(dates)} samples)")
-            except Exception as e:
-                print(f"  {model_name}: Error parsing dates - {e}")
-    
-    if all_start_dates and all_end_dates:
-        # Use the latest start date and earliest end date (intersection)
-        latest_start = max([d[1] for d in all_start_dates])
-        earliest_end = min([d[1] for d in all_end_dates])
-        
-        print(f"\n  Common time range: {latest_start.strftime('%Y-%m-%d')} to {earliest_end.strftime('%Y-%m-%d')}")
-        
-        # Trim each model's data to the common range
-        for model_name in list(model_bollinger_bands.keys()):
-            bb_data = model_bollinger_bands[model_name]
-            dates = bb_data['dates']
-            
-            # Find indices within the common range
-            valid_indices = []
-            for i, date in enumerate(dates):
-                try:
-                    dt = pd.to_datetime(date)
-                    if latest_start <= dt <= earliest_end:
-                        valid_indices.append(i)
-                except:
-                    pass
-            
-            if valid_indices:
-                print(f"  {model_name}: Trimming from {len(dates)} to {len(valid_indices)} samples")
-                
-                # Trim all arrays to valid_indices
-                model_bollinger_bands[model_name] = {
-                    'upper': [bb_data['upper'][i] if i < len(bb_data['upper']) else np.nan for i in valid_indices],
-                    'middle': [bb_data['middle'][i] if i < len(bb_data['middle']) else np.nan for i in valid_indices],
-                    'lower': [bb_data['lower'][i] if i < len(bb_data['lower']) else np.nan for i in valid_indices],
-                    'errors': [bb_data['errors'][i] if i < len(bb_data['errors']) else np.nan for i in valid_indices],
-                    'dates': [dates[i] for i in valid_indices]
-                }
+# Time alignment / intersection trimming has been removed:
+#  all three models share the same test segment (9950 samples); after unifying the absolute index
+#  makes the time range and number of predictions match exactly, so no trimming is needed (or done) any more
 
 # Plot each model
 model_names = ['Gene', 'LSTM', 'MLP']

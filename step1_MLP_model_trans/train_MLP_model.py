@@ -25,8 +25,8 @@ def train_model():
     dataset = WaterQualityDataset(wq_data, labels_dict, window_size=40)
     
     # Split dataset using indices
-    train_size = int(0.3 * len(dataset))  # 前0%-30%的数据
-    val_size = int(0.1 * len(dataset))  # 30%-35%的数据
+    train_size = int(0.3 * len(dataset))  # the first 0%-30% of the data
+    val_size = int(0.1 * len(dataset))  # the 30%-40% of the data
     test_size = len(dataset) - train_size - val_size
     
     # Use Subset to select data by indices

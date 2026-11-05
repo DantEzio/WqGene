@@ -1,3 +1,22 @@
+"""
+LSTM_model.py - LSTM baseline model definition and data handling
+=========================================================
+use it as the GeneModel reference baseline: WQ series only, without any gene information.
+
+Main components:
+    1) LSTMModel            : multi-output LSTM taking a window x feature WQ sequence as input,
+                              produces 6 dims (ANA/ANO/OX x DO/AN/NN).
+    2) calculate_loss       : multi-output MSE loss.
+    3) WaterQualityDataset  : builds WQ sliding-window samples (window steps of history -> next-step label).
+    4) prepare_data         : reads and standardizes the WQ data and splits it chronologically into train/val/test.
+
+Input data:
+    ../data_WQ/wq_scaled.csv, ../data_WQ/wq.xlsx
+
+Usage:
+    imported as a module by train_LSTM_model.py / test_LSTM_model*.py
+"""
+
 import torch
 import torch.nn as nn
 import pandas as pd
@@ -7,7 +26,7 @@ import os
 class LSTMModel(nn.Module):
     def __init__(self, hidden_dim=256, dropout_rate=0.3):
         super().__init__()
-        # 输入维度定义
+        # Input dimension definition
         self.wq_inf_dim = 7  # F-INF, T-INF, pH-INF, COD-INF, C/N-INF, TN-INF, AN-INF
         self.wq_ana_dim = 3  # DO-ANA, AN-ANA, NN-ANA
         self.wq_ano_dim = 3  # DO-ANO, AN-ANO, NN-ANO
@@ -27,24 +46,24 @@ class LSTMModel(nn.Module):
             dropout=dropout_rate
         )
         
-        # 输出层
+        # Output layer
         self.output_ana = nn.Linear(self.hidden_dim, 3)  # DO-ANA, AN-ANA, NN-ANA
         self.output_ano = nn.Linear(self.hidden_dim, 3)  # DO-ANO, AN-ANO, NN-ANO
         self.output_ox = nn.Linear(self.hidden_dim, 3)   # DO-OX, AN-OX, NN-OX
         self.output_eff = nn.Linear(self.hidden_dim, 3)  # COD-EFF, TN-EFF, AN-EFF
     
     def forward(self, wq_inf, wq_ana, wq_ano, wq_ox, wq_eff):
-        # 输入形状: (batch, timestep, dim)
+        # Input shape: (batch, timestep, dim)
         batch_size, timestep, _ = wq_inf.shape
         
-        # 分量赋值 (与 gene model forward 一致)
+        # Component assignment (consistent with the gene model forward pass)
         inf_proj = wq_inf  # (batch, timestep, wq_inf_dim)
         ana_proj = wq_ana  # (batch, timestep, wq_ana_dim)
         ano_proj = wq_ano  # (batch, timestep, wq_ano_dim)
         ox_proj = wq_ox    # (batch, timestep, wq_ox_dim)
         eff_proj = wq_eff  # (batch, timestep, wq_eff_dim)
         
-        # 拼接成大变量 (与 gene model forward 一致)
+        # Concatenate into the big input tensor (consistent with the gene model forward pass)
         concat_features = torch.cat([
             inf_proj,   # wq_inf_dim
             ana_proj,   # wq_ana_dim
@@ -53,19 +72,19 @@ class LSTMModel(nn.Module):
             eff_proj    # wq_eff_dim
         ], dim=-1)  # (batch, timestep, wq_inf_dim + wq_ana_dim + wq_ano_dim + wq_ox_dim + wq_eff_dim)
         
-        # 送入LSTM
+        # Feed into the LSTM
         lstm_out, _ = self.lstm(concat_features)  # (batch, timestep, hidden_dim)
         
-        # 取最后一个时间步的输出
+        # Take the output of the last time step
         last_output = lstm_out[:, -1, :]  # (batch, hidden_dim)
         
-        # 输出预测
+        # Output the predictions
         output_ana = self.output_ana(last_output)
         output_ano = self.output_ano(last_output)
         output_ox = self.output_ox(last_output)
         output_eff = self.output_eff(last_output)
         
-        # 取最后一个时间步的分量向量 (与 gene model fusion 输出对应)
+        # Take the component vector of the last time step (matches the gene model fusion output)
         fusion_inf_ana_last = ana_proj[:, -1, :]  # (batch, wq_ana_dim)
         fusion_ana_ano_last = ano_proj[:, -1, :]  # (batch, wq_ano_dim)
         fusion_ano_ox_last = ox_proj[:, -1, :]    # (batch, wq_ox_dim)
@@ -101,7 +120,7 @@ class WaterQualityDataset(torch.utils.data.Dataset):
         self.labels_dict = labels_dict
         self.window_size = window_size
         
-        # 输入变量定义
+        # Input variable definition
         self.inf_vars = ['F-INF_MA_smooth', 'T-INF_MA_smooth', 'pH-INF_MA_smooth', 
                         'COD-INF_MA_smooth', 'C/N-INF_MA_smooth', 'TN-INF_MA_smooth', 'AN-INF_MA_smooth']
         self.ana_vars = ['DO-ANA_MA_smooth', 'AN-ANA_MA_smooth', 'NN-ANA_MA_smooth']
@@ -113,30 +132,30 @@ class WaterQualityDataset(torch.utils.data.Dataset):
         return len(self.wq_data) - self.window_size
     
     def __getitem__(self, idx):
-        # 获取前40个时间步的数据
+        # Take the first 40 time steps
         window_end = idx + self.window_size
         
-        # 获取INF数据（保持时间序列维度）
+        # Fetch the INF data (keeping the time dimension)
         inf_data = self.wq_data[self.inf_vars].iloc[idx:window_end]
         inf_feat = torch.tensor(inf_data.values, dtype=torch.float32)  # (window_size, 7)
         
-        # 获取ANA数据
+        # Fetch the ANA data
         ana_data = self.wq_data[self.ana_vars].iloc[idx:window_end]
         ana_feat = torch.tensor(ana_data.values, dtype=torch.float32)  # (window_size, 3)
         
-        # 获取ANO数据
+        # Fetch the ANO data
         ano_data = self.wq_data[self.ano_vars].iloc[idx:window_end]
         ano_feat = torch.tensor(ano_data.values, dtype=torch.float32)  # (window_size, 3)
         
-        # 获取OX数据
+        # Fetch the OX data
         ox_data = self.wq_data[self.ox_vars].iloc[idx:window_end]
         ox_feat = torch.tensor(ox_data.values, dtype=torch.float32)  # (window_size, 3)
         
-        # 获取EFF数据
+        # Fetch the EFF data
         eff_data = self.wq_data[self.eff_vars].iloc[idx:window_end]
         eff_feat = torch.tensor(eff_data.values, dtype=torch.float32)  # (window_size, 3)
         
-        # 获取下一时刻的标签
+        # Get the labels of the next time step
         labels = {
             "ANA": torch.tensor(self.labels_dict["ANA"][window_end], dtype=torch.float32),
             "ANO": torch.tensor(self.labels_dict["ANO"][window_end], dtype=torch.float32),
@@ -147,16 +166,16 @@ class WaterQualityDataset(torch.utils.data.Dataset):
         return inf_feat, ana_feat, ano_feat, ox_feat, eff_feat, labels
 
 def prepare_data():
-    # 获取当前脚本所在目录
+    # Get the directory of this script
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    # 构建数据文件的绝对路径
+    # Build the absolute path of the data file
     wq_path = os.path.join(current_dir, '../data_WQ/wq_scaled.csv')
     
     print(f"Loading data from:")
     print(f"  - Water quality data: {wq_path}")
     
     try:
-        # 读取水质数据
+        # Read the water quality data
         wq_data = pd.read_csv(wq_path)
     except Exception as e:
         print(f"Error loading data: {e}")
@@ -164,7 +183,7 @@ def prepare_data():
     
     print(f"Total samples: {len(wq_data)}")
     
-    # 准备标签数据
+    # Prepare the label data
     labels_dict = {
         "ANA": wq_data[['DO-ANA_MA_smooth', 'AN-ANA_MA_smooth', 'NN-ANA_MA_smooth']].values,
         "ANO": wq_data[['DO-ANO_MA_smooth', 'AN-ANO_MA_smooth', 'NN-ANO_MA_smooth']].values,

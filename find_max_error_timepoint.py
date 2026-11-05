@@ -1,63 +1,74 @@
 """
-找出 Gene Model、LSTM、MLP 三种模型预测结果中误差最高的时间节点。
-读取各模型的 prediction.csv，计算每个时间步的绝对误差（MAE），
-输出误差最大的时间节点及其对应的日期和误差值。
-
-用法: python find_max_error_timepoint.py
+find_max_error_timepoint.py - locate the time point with the largest error for each model
+=========================================================
+Purpose:
+    read the prediction.csv of the Gene / LSTM / MLP models and compute the per-time-step
+    absolute error, find the time point with the largest error and convert time_step into a real date,
+    makes it easy to look back at the operating conditions of that moment (influent shock, loading spike, etc.) and explain the failure.
+    report per feature (each indicator of each region) and give the overall worst time point.
+Input:
+    step1_gene_model_trans_2block_FullTL/results/gene_model/prediction.csv
+    step1_LSTM_model_trans/results/LSTM_model/prediction.csv
+    step1_MLP_model_trans/results/MLP_model/prediction.csv
+    data_WQ/wq.xlsx (time column, used to map time_step -> date)
+Output:
+    prints only the maximum-error time points and values to the console (no files are written)
+Usage:
+    python find_max_error_timepoint.py           # run from the project root
 """
 
 import os
 import numpy as np
 import pandas as pd
 
-# 抑制 OpenMP 警告
+# Suppress the OpenMP warning
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 
 # ============================================================
-# 配置：各模型 prediction.csv 的路径
+# Configuration: paths of each model's prediction.csv
 # ============================================================
 PREDICTION_PATHS = {
-    'Gene': 'step1_gene_model_trans/results/gene_model/prediction.csv',
+    'Gene': 'step1_gene_model_trans_2block_FullTL/results/gene_model/prediction.csv',
     'LSTM':  'step1_LSTM_model_trans/results/LSTM_model/prediction.csv',
     'MLP':   'step1_MLP_model_trans/results/MLP_model/prediction.csv',
 }
 
-# 水质原始日期文件（用于将 time_step 映射为实际日期）
+# Raw WQ date file (maps time_step to the actual date)
 WQ_DATE_FILE = 'data_WQ/wq.xlsx'
 
 
 def load_dates(wq_path):
-    """从 wq.xlsx 读取实际日期列表"""
+    """Read the list of actual dates from wq.xlsx"""
     try:
         df = pd.read_excel(wq_path)
         dates = df['time'].tolist()
-        print(f"成功读取 {len(dates)} 条日期记录")
+        print(f"Successfully read {len(dates)} date records")
         return dates
     except Exception as e:
-        print(f"警告：无法读取 {wq_path}: {e}")
+        print(f"Warning: cannot read {wq_path}: {e}")
         return None
 
 
 def load_prediction(path):
-    """加载 prediction.csv，返回 DataFrame"""
+    """Load prediction.csv and return a DataFrame"""
     if not os.path.exists(path):
-        print(f"文件不存在: {path}")
+        print(f"File not found: {path}")
         return None
     df = pd.read_csv(path)
-    print(f"加载 {path}: {len(df)} 行, {len(df.columns)} 列")
+    print(f"Loaded {path}: {len(df)} rows, {len(df.columns)} columns")
     return df
 
 
 def calculate_errors(df):
     """
-    计算每个时间步的绝对误差（MAE）。
+    compute the absolute error (MAE) of each time step.
     
-    对每个区域（ANA/ANO/OX/EFF），计算 |pred - real| 的均值，
-    再对所有区域的误差取平均，得到该时间步的综合 MAE。
+    for each region (ANA/ANO/OX/EFF), compute the mean of |pred - real|,
+    then average the errors over all regions to get the overall MAE of that time step.
     
     Returns:
-        errors: (N,) array — 每个时间步的 MAE
-        region_errors: dict — 各区域单独的误差
+        errors: (N,) array of the MAE at each time step
+        region_errors: dict of the error of each region
     """
     real_cols = [c for c in df.columns if 'real' in c.lower()]
     pred_cols = [c for c in df.columns if 'pred' in c.lower()]
@@ -65,10 +76,10 @@ def calculate_errors(df):
     real_vals = df[real_cols].values   # (N, 12)
     pred_vals = df[pred_cols].values   # (N, 12)
     
-    # 总体 MAE（所有 12 个特征取平均）
+    # Overall MAE (averaged over all 12 features)
     total_mae = np.mean(np.abs(pred_vals - real_vals), axis=1)  # (N,)
     
-    # 按区域分解误差
+    # Break the error down by region
     regions = ['ANA', 'ANO', 'OX', 'EFF']
     region_errors = {}
     for region in regions:
@@ -83,15 +94,15 @@ def calculate_errors(df):
 
 def find_max_error_timepoint(errors, dates=None, time_steps=None):
     """
-    找出误差最大的时间节点。
+    find the time point with the largest error.
     
     Args:
-        errors: (N,) 误差数组
-        dates: 实际日期列表（可选）
-        time_steps: time_step 列值（可选）
+        errors: (N,) error array
+        dates: list of actual dates (optional)
+        time_steps: values of the time_step column (optional)
     
     Returns:
-        dict: 包含索引、日期、误差值等信息
+        dict: holds the index, date and error value
     """
     max_idx = int(np.argmax(errors))
     max_err = errors[max_idx]
@@ -104,7 +115,7 @@ def find_max_error_timepoint(errors, dates=None, time_steps=None):
         'total_samples': len(errors),
     }
     
-    # 尝试获取日期
+    # Try to obtain the dates
     if time_steps is not None and max_idx < len(time_steps):
         ts = time_steps[max_idx]
         result['time_step'] = int(ts)
@@ -117,14 +128,14 @@ def find_max_error_timepoint(errors, dates=None, time_steps=None):
 
 def main():
     print("=" * 60)
-    print("Gene / LSTM / MLP 模型预测误差分析 — 找出最高误差时间节点")
+    print("Prediction error analysis of the Gene / LSTM / MLP models - find the maximum-error time points")
     print("=" * 60)
     
-    # 加载日期映射
+    # Load the date mapping
     dates = load_dates(WQ_DATE_FILE)
     print()
     
-    # 存储各模型结果
+    # Store the results of each model
     all_results = {}
     
     for model_name, path in PREDICTION_PATHS.items():
@@ -133,10 +144,10 @@ def main():
         if df is None:
             continue
         
-        # 计算误差
+        # Compute the error
         total_mae, region_errors = calculate_errors(df)
         
-        # 找最大误差时间点
+        # Locate the time point of the maximum error
         time_steps = df['time_step'].values if 'time_step' in df.columns else None
         result = find_max_error_timepoint(total_mae, dates=dates, time_steps=time_steps)
         result['region_errors'] = region_errors
@@ -144,29 +155,29 @@ def main():
         
         all_results[model_name] = result
         
-        # 打印摘要
+        # Print a summary
         date_str = result.get('date', 'N/A')
         if hasattr(date_str, 'strftime'):
             date_str = date_str.strftime('%Y-%m-%d %H:%M')
         ts_str = result.get('time_step', 'N/A')
         
-        print(f"  样本数:       {result['total_samples']}")
-        print(f"  平均 MAE:     {result['mean_error']:.6f}")
-        print(f"  MAE 标准差:   {result['std_error']:.6f}")
-        print(f"  ** 最大 MAE:  {result['max_error']:.6f}**")
-        print(f"  ** 时间节点:  time_step={ts_str}, 日期={date_str} **")
+        print(f"  Sample count:       {result['total_samples']}")
+        print(f"  Mean MAE:     {result['mean_error']:.6f}")
+        print(f"  MAE std:   {result['std_error']:.6f}")
+        print(f"  ** Max MAE:  {result['max_error']:.6f}**")
+        print(f"  ** Time point:  time_step={ts_str}, date={date_str} **")
         
-        # 该时间点各区域误差
-        print(f"  该时间点各区域误差:")
+        # Per-region error at this time point
+        print(f"  Per-region error at this time point:")
         for region, re_arr in region_errors.items():
             print(f"    {region}: {re_arr[result['index']]:.6f}")
         print()
     
     # ============================================================
-    # 汇总对比：三个模型的最高误差是否出现在同一时间点？
+    # Cross-model comparison: do the three models peak at the same time point?
     # ============================================================
     print("=" * 60)
-    print("汇总对比")
+    print("Cross-model comparison")
     print("=" * 60)
     
     summary_rows = []
@@ -187,24 +198,24 @@ def main():
     summary_df = pd.DataFrame(summary_rows)
     print(summary_df.to_string(index=False))
     
-    # 找出全局最高误差（跨模型比较）
+    # Find the global maximum error (cross-model comparison)
     global_max_model = max(all_results.keys(), key=lambda m: all_results[m]['max_error'])
     global_max_result = all_results[global_max_model]
     
-    print(f"\n>>> 全局最高误差模型: {global_max_model}")
-    print(f">>> 最高 MAE 值:     {global_max_result['max_error']:.6f}")
-    print(f">>> 对应时间节点:   time_step={global_max_result.get('time_step', 'N/A')}")
+    print(f"\n>>> Model with the global maximum error: {global_max_model}")
+    print(f">>> Maximum MAE value:     {global_max_result['max_error']:.6f}")
+    print(f">>> Corresponding time point:   time_step={global_max_result.get('time_step', 'N/A')}")
     
     g_date = global_max_result.get('date', 'N/A')
     if hasattr(g_date, 'strftime'):
         g_date = g_date.strftime('%Y-%m-%d %H:%M')
-    print(f">>> 对应日期:       {g_date}")
+    print(f">>> Corresponding date:       {g_date}")
     
-    # 保存汇总结果到 CSV
+    # Save the summary results to CSV
     output_dir = 'results'
     os.makedirs(output_dir, exist_ok=True)
     
-    # 保存详细汇总
+    # Save the detailed summary
     detail_rows = []
     for model_name, res in all_results.items():
         row = {
@@ -215,7 +226,7 @@ def main():
             'Time_Step': res.get('time_step', -1),
             'Sample_Index': res['index'],
         }
-        # 加入各区域在该点的误差
+        # Add the per-region errors at this point
         for region, re_arr in res['region_errors'].items():
             row[f'{region}_MAE_at_max'] = re_arr[res['index']]
         detail_rows.append(row)
@@ -223,19 +234,19 @@ def main():
     detail_df = pd.DataFrame(detail_rows)
     csv_path = os.path.join(output_dir, 'max_error_timepoint_summary.csv')
     detail_df.to_csv(csv_path, index=False)
-    print(f"\n汇总已保存至: {csv_path}")
+    print(f"\nSummary saved to: {csv_path}")
     
-    # 同时保存每个时间步的完整误差序列（用于后续绘图等）
+    # Also save the full error series of each time step (for later plotting)
     error_series = {'time_step': []}
     for model_name, res in all_results.items():
         if 'time_step' in locals() or True:
-            # 从原始 df 中重新获取 time_step
+            # Re-read time_step from the original df
             pass
-    # 用更简单的方式：直接保存各模型完整误差
+    # Simpler approach: store the complete error series of each model directly
     for model_name, res in all_results.items():
         error_series[f'{model_name}_MAE'] = res['all_errors']
     
-    # 获取公共的 time_step（以第一个模型为准）
+    # Get the shared time_step values (keyed on the first model)
     first_model = list(all_results.keys())[0]
     df_first = load_prediction(PREDICTION_PATHS[first_model])
     if df_first is not None and 'time_step' in df_first.columns:
@@ -244,9 +255,9 @@ def main():
     error_df = pd.DataFrame(error_series)
     error_csv_path = os.path.join(output_dir, 'all_models_error_timeseries.csv')
     error_df.to_csv(error_csv_path, index=False)
-    print(f"误差时序数据已保存至: {error_csv_path}")
+    print(f"Error time series saved to: {error_csv_path}")
     
-    print("\n完成！")
+    print("\nDone!")
 
 
 if __name__ == '__main__':

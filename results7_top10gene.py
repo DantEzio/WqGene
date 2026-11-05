@@ -1,11 +1,11 @@
 """
 results7_top10gene.py
 =====================
-功能：整合 9月(Sep)/10月(Oct) 的 geneM(MT)、IMP、LEF(PDP) 数据，
-提取每个 Period × DO × Index 组合下的 Top10 基因，
-并找出同一 DO 下三个 Index 共同识别的重要基因。
+Purpose: integrate the geneM (MT), IMP and LEF (PDP) data of Sep and Oct,
+extract the Top10 genes of each Period x DO x Index combination,
+and find the important genes shared by the three indices of the same DO.
 
-输出格式：
+Output format:
   Period | DO       | Index | Gene name                              | Commonly identified important genes
   -------|----------|-------|----------------------------------------|--------------------------------------
   Sep    | Ana&ano  | MT    | K00366, K00368, ...                    | K00371, K04561, ...
@@ -13,13 +13,19 @@ results7_top10gene.py
   Sep    | Ana&ano  | LEF   | K04561, K02586, ...                    | K00371, K04561, ...
   ...
 
-数据源：
+Data sources:
   - MT (geneM):     ./data_GeneM/n_gene_dynamic.xlsx  (sheet: ana_ano, ox)
   - IMP:            ./results/IMP/*_Window2_0813-0913.xlsx (Sep)
                              *_Window3_0913-1013.xlsx (Oct)
   - LEF (PDP):      ./results/PDP/*_Window2_0813-0913.xlsx (Sep)
                              *_Window3_0913-1013.xlsx (Oct)
-  - Gene 名称映射： ./gene_ref/Gene_info.xlsx
+  - Gene name mapping: ./gene_ref/Gene_info.xlsx
+
+Output:
+    results/top10gene.xlsx (the Top10 genes and shared genes of each Period x DO x Index combination)
+
+Usage:
+    python results7_top10gene.py                 # run from the project root
 """
 
 import os
@@ -27,7 +33,7 @@ import pandas as pd
 
 
 # ============================================================
-# 路径配置
+# Path configuration
 # ============================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -39,15 +45,15 @@ GENE_INFO_PATH = os.path.join(BASE_DIR, 'gene_ref', 'Gene_info.xlsx')
 OUTPUT_DIR = os.path.join(BASE_DIR, 'results')
 OUTPUT_FILE = os.path.join(OUTPUT_DIR, 'top10gene.xlsx')
 
-TOP_N = 10  # 提取 Top N 基因
+TOP_N = 10  # number of top genes to extract
 
-# DO 类型映射
+# DO type mapping
 DO_TYPES = {
     'ana_ano': 'Ana&ano',
     'ox': 'Ox',
 }
 
-# 月份映射（基于文件名中的日期范围）
+# Month mapping (derived from the date range in the filename)
 PERIOD_MAP = {
     'Window2_0813-0913': 'Sep',
     'Window3_0913-1013': 'Oct',
@@ -55,28 +61,28 @@ PERIOD_MAP = {
 
 
 # ============================================================
-# 1. 加载 Gene 名称映射表 (Kxxxxx → 描述名)
+# 1. Load the gene name mapping table (Kxxxxx -> description)
 # ============================================================
 def load_gene_info():
-    """加载 Gene_info，返回 KO → Description 的映射字典"""
+    """Load Gene_info and return a KO -> Description mapping dict"""
     if not os.path.exists(GENE_INFO_PATH):
-        print(f"[警告] Gene_info 不存在: {GENE_INFO_PATH}")
+        print(f"[warning] Gene_info not found: {GENE_INFO_PATH}")
         return {}
     
     df = pd.read_excel(GENE_INFO_PATH)
-    # 取每個 KO 的第一條描述
+    # Take the first description of each KO
     gene_map = dict(zip(df['KO'], df['Description']))
-    print(f"[Gene_info] 已加载 {len(gene_map)} 条基因映射")
+    print(f"[Gene_info] loaded {len(gene_map)} gene mappings")
     return gene_map
 
 
 def resolve_gene_name(ko_id, gene_map):
     """
-    解析基因名称：从 Gene_info Description 中提取基因名（保留原始格式）。
-    Description 格式: 
-      - "K00366  nirA; ferredoxin-nitrite reductase [EC:1.7.7.1]" → "nirA"
-      - "K00371  narH, narY, nxrB; nitrate reductase ..." → "narH, narY, nxrB"
-    返回单个 KO 对应的基因名（多个则保留逗号）。
+    resolve the gene names: extract the gene name from the Gene_info Description (keeping the original format).
+    Description format:
+      - "K00366  nirA; ferredoxin-nitrite reductase [EC:1.7.7.1]" -> "nirA"
+      - "K00371  narH, narY, nxrB; nitrate reductase ..." -> "narH, narY, nxrB"
+    returns the gene name of a single KO (comma-separated when there are several).
     """
     if not isinstance(ko_id, str):
         ko_id = str(ko_id)
@@ -86,81 +92,81 @@ def resolve_gene_name(ko_id, gene_map):
     if ko_id.upper().startswith('K'):
         desc = gene_map.get(ko_id.upper(), '')
         if desc:
-            # 提取 ; 前面的部分（基因名区域）
+            # Take the part before the semicolon (the gene name field)
             if ';' in desc:
                 gene_part = desc.split(';')[0].strip()
             else:
                 gene_part = desc.strip()
             
-            # 去掉可能的 KO ID 前缀 (如 "K15864  nirS" → "nirS")
+            # Strip a possible KO ID prefix (e.g. "K15864  nirS" -> "nirS")
             parts = gene_part.split()
             if len(parts) > 1 and parts[0].upper().startswith('K'):
                 gene_part = ' '.join(parts[1:])
             
-            return gene_part  # ★ 保留原始逗号格式: "narH, narY, nxrB"
+            return gene_part  # keep the original comma format: "narH, narY, nxrB"
         return ko_id
     return ko_id
 
 
 # ============================================================
-# 2. 读取 MT (geneM) 数据
+# 2. Read the MT (geneM) data
 # ============================================================
 def read_genem_data():
     """
-    读取 n_gene_dynamic.xlsx，按 DO 类型提取 Top N 基因。
-    返回: {do_type: {period: [gene_list]}}
+    read n_gene_dynamic.xlsx and extract the top N genes for each DO type.
+    returns: {do_type: {period: [gene_list]}}
     """
     result = {}
     
     if not os.path.exists(GENEM_PATH):
-        print(f"[错误] geneM 文件不存在: {GENEM_PATH}")
+        print(f"[error] geneM file not found: {GENEM_PATH}")
         return result
     
-    # 两个 sheet: ana_ano, ox
+    # Two sheets: ana_ano, ox
     for do_type in ['ana_ano', 'ox']:
         try:
             df = pd.read_excel(GENEM_PATH, sheet_name=do_type)
             print(f"\n[geneM] Sheet [{do_type}]: shape={df.shape}, cols={list(df.columns)}")
             
-            # 列结构: [Sep_col, Oct_col, gene_name_col]
+            # Column layout: [Sep_col, Oct_col, gene_name_col]
             cols = list(df.columns)
-            gene_col = cols[-1]  # 基因名列通常是最后一列
+            gene_col = cols[-1]  # the gene name column is usually the last one
             
             result[do_type] = {}
             
-            # Sep 对应第1列 (index 0), Oct 对应第2列 (index 1)
+            # Sep maps to column 1 (index 0), Oct to column 2 (index 1)
             period_cols = {
                 'Sep': cols[0],
                 'Oct': cols[1],
             }
             
             for period, col_name in period_cols.items():
-                # 按值降序排列，取 Top N
+                # Sort by value descending and take the top N
                 df_sorted = df.sort_values(by=col_name, ascending=False)
                 top_genes = df_sorted[gene_col].head(TOP_N).tolist()
                 
-                # 清理基因名称
+                # Clean up the gene names
                 top_genes = [str(g).strip() for g in top_genes if pd.notna(g)]
                 
                 result[do_type][period] = top_genes
-                print(f"  {period} Top{TOP_N}: {top_genes[:3]}... (共{len(top_genes)}个)")
+                print(f"  {period} Top{TOP_N}: {top_genes[:3]}... ({len(top_genes)} genes in total)")
                 
         except Exception as e:
-            print(f"[错误] 读取 geneM sheet [{do_type}] 失败: {e}")
+            print(f"[error] failed to read geneM sheet [{do_type}]: {e}")
     
     return result
 
 
 # ============================================================
-# 3. 读取 IMP / LEF (PDP) 数据
+# 3. Read the IMP / LEF (PDP) data
 # ============================================================
 def read_index_data(data_dir, index_name):
     """
-    读取 IMP 或 PDP 目录下的数据，按 DO 类型和月份分类。
+    read the data under the IMP or PDP directory, grouped by DO type and month.
     
     Args:
-        data_dir: 数据目录 (IMP_DIR 或 PDP_DIR)
-        index_name: 'IMP' 或 'LEF'
+        data_dir: data directory (IMP_DIR or PDP_DIR)
+        index_name: 'IMP' or 'LEF'
     
     Returns:
         {do_type: {period: [gene_list]}}
@@ -168,77 +174,77 @@ def read_index_data(data_dir, index_name):
     result = {}
     
     if not os.path.exists(data_dir):
-        print(f"[错误] 目录不存在: {data_dir}")
+        print(f"[error] directory not found: {data_dir}")
         return result
     
     for do_type in ['ana_ano', 'ox']:
         result[do_type] = {}
         
         for window_key, period in PERIOD_MAP.items():
-            # 构建文件名: {do_type}_{window_key}.xlsx
+            # Build the filename: {do_type}_{window_key}.xlsx
             filename = f"{do_type}_{window_key}.xlsx"
             filepath = os.path.join(data_dir, filename)
             
             if not os.path.exists(filepath):
-                print(f"[警告] {index_name} 文件不存在: {filename}")
+                print(f"[warning] {index_name} file not found: {filename}")
                 result[do_type][period] = []
                 continue
             
             try:
                 df = pd.read_excel(filepath)
-                # 取 Top N 基因 (已按重要性排序)
+                # Take the top N genes (already sorted by importance)
                 top_genes = df['gene'].head(TOP_N).tolist()
                 top_genes = [str(g).strip() for g in top_genes if pd.notna(g)]
                 
                 result[do_type][period] = top_genes
-                print(f"[{index_name}] {filename}: Top{TOP_N} = {top_genes[:3]}... (共{len(top_genes)}个)")
+                print(f"[{index_name}] {filename}: Top{TOP_N} = {top_genes[:3]}... ({len(top_genes)} genes in total)")
                 
             except Exception as e:
-                print(f"[错误] 读取 {index_name} 文件失败 {filename}: {e}")
+                print(f"[error] failed to read the {index_name} file {filename}: {e}")
                 result[do_type][period] = []
     
     return result
 
 
 # ============================================================
-# 4. 构建 Top10Gene 表格
+# 4. Build the Top10Gene table
 # ============================================================
 def build_top10gene_table(genem_data, imp_data, lef_data, gene_map):
     """
-    整合所有数据源，构建最终表格。
+    integrate all data sources and build the final table.
     
-    表格结构:
+    Table layout:
       Period | DO | Index | Gene name | Common genes
     """
     rows = []
     
-    # 遍历所有 Period × DO × Index 组合
+    # Loop over every Period x DO x Index combination
     for period in ['Sep', 'Oct']:
         for do_type in ['ana_ano', 'ox']:
             do_display = DO_TYPES[do_type]
             
-            # 收集该 (Period, DO) 下三个 Index 的 Top10 基因列表
+            # Collect the Top10 gene lists of the three indices for this (Period, DO)
             mt_genes = genem_data.get(do_type, {}).get(period, [])
             imp_genes = imp_data.get(do_type, {}).get(period, [])
             lef_genes = lef_data.get(do_type, {}).get(period, [])
             
-            # 解析基因名称 (添加描述)
+            # Resolve the gene names (adding the description)
             mt_resolved = [resolve_gene_name(g, gene_map) for g in mt_genes]
             imp_resolved = [resolve_gene_name(g, gene_map) for g in imp_genes]
             lef_resolved = [resolve_gene_name(g, gene_map) for g in lef_genes]
             
-            # 找出共同基因 (用原始 ID 匹配，不包含描述)
+            # Find the common genes (matched by raw ID, excluding descriptions)
             mt_set = set(mt_genes)
             imp_set = set(imp_genes)
             lef_set = set(lef_genes)
             common_genes = mt_set & imp_set & lef_set
             
-            # 共同基因也解析名称
+            # Resolve the names of the common genes as well
             common_resolved = [resolve_gene_name(g, gene_map) for g in sorted(common_genes)]
-            # ★ 不同 KO ID 之间用分号隔开
+            # KO IDs are separated by semicolons
             common_str = '; '.join(common_resolved) if common_resolved else '-'
             
-            # 构建三行 (MT, IMP, LEF)
+            # Build three rows (MT, IMP, LEF)
             index_data = [
                 ('MT', mt_resolved),
                 ('IMP', imp_resolved),
@@ -246,7 +252,7 @@ def build_top10gene_table(genem_data, imp_data, lef_data, gene_map):
             ]
             
             for idx_name, gene_list in index_data:
-                # ★ 不同 KO ID 之间用分号隔开
+                # KO IDs are separated by semicolons
                 gene_str = '; '.join(gene_list) if gene_list else '-'
                 
                 rows.append({
@@ -261,42 +267,42 @@ def build_top10gene_table(genem_data, imp_data, lef_data, gene_map):
 
 
 # ============================================================
-# 主函数
+# Main function
 # ============================================================
 def main():
     print("=" * 60)
     print("Results7: Top10 Gene Integration (Sep/Oct)")
     print("=" * 60)
     
-    # 创建输出目录
+    # Create the output directory
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     
-    # 1. 加载基因名称映射
-    print("\n--- Step 1: 加载 Gene Info ---")
+    # 1. Load the gene name mapping
+    print("\n--- Step 1: load Gene Info ---")
     gene_map = load_gene_info()
     
-    # 2. 读取 MT (geneM) 数据
-    print("\n--- Step 2: 读取 MT (geneM) 数据 ---")
+    # 2. Read the MT (geneM) data
+    print("\n--- Step 2: read the MT (geneM) data ---")
     genem_data = read_genem_data()
     
-    # 3. 读取 IMP 数据
-    print("\n--- Step 3: 读取 IMP 数据 ---")
+    # 3. Read the IMP data
+    print("\n--- Step 3: read the IMP data ---")
     imp_data = read_index_data(IMP_DIR, 'IMP')
     
-    # 4. 读取 LEF (PDP) 数据
-    print("\n--- Step 4: 读取 LEF (PDP) 数据 ---")
+    # 4. Read the LEF (PDP) data
+    print("\n--- Step 4: read the LEF (PDP) data ---")
     lef_data = read_index_data(PDP_DIR, 'LEF')
     
-    # 5. 构建表格
-    print("\n--- Step 5: 构建 Top10Gene 表格 ---")
+    # 5. Build the table
+    print("\n--- Step 5: build the Top10Gene table ---")
     df_result = build_top10gene_table(genem_data, imp_data, lef_data, gene_map)
     
-    # 6. 保存结果
-    print("\n--- Step 6: 保存结果 ---")
+    # 6. Save results
+    print("\n--- Step 6: save the results ---")
     df_result.to_excel(OUTPUT_FILE, index=False)
-    print(f"已保存: {OUTPUT_FILE}")
-    print(f"表格形状: {df_result.shape}")
-    print("\n预览:")
+    print(f"Saved: {OUTPUT_FILE}")
+    print(f"Table shape: {df_result.shape}")
+    print("\nPreview:")
     print(df_result.to_string())
     
     return df_result

@@ -1,12 +1,27 @@
 """
-统计各时间窗口内每个 gene 的 SHAP 平均值，导出为 Excel。
+results5_SHAP_time_window_stats.py - per-time-window gene SHAP importance summary (IMP)
+=========================================================
+Purpose:
+    bucket the per-checkpoint SHAP results into three time windows by actual date,
+    average mean_abs_SHAP of each gene inside the window, used as that window's gene importance (IMP).
+    results are saved in descending order of importance for results6_trans_IMP_PDP_barplot.py / results7_top10gene.py.
 
-时间窗口:
-  - Window 1: 7月13日 ~ 8月13日
-  - Window 2: 8月13日 ~ 9月13日
-  - Window 3: 9月13日 ~ 10月13日
+Time windows:
+  - Window 1: Jul 13 - Aug 13  (Window1_0713-0813)
+  - Window 2: Aug 13 - Sep 13  (Window2_0813-0913)
+  - Window 3: Sep 13 - Oct 13 (Window3_0913-1013)
 
-输出: results/IMP/ 目录下，每个反应器类型 × 时间窗口 一个 Excel 文件。
+Input:
+    results/Shapely for trans/step_{N}/SHAP_feature_importance_{zone}.csv
+    data_WQ/wq.xlsx (time column, used to map step_N -> actual date)
+    gene_ref/Gene_info.xlsx (KEGG -> gene name mapping)
+Output:
+    results/IMP/{zone}_{window}_{start-end}.xlsx
+    (one Excel file per reactor type x time window, with gene / mean_SHAP columns)
+Usage:
+    python results5_SHAP_time_window_stats.py       # run from the project root
+Note:
+    The PDP version is results5_PDP_time_window_stats.py, with identical logic
 """
 
 import os
@@ -17,33 +32,33 @@ from datetime import datetime
 
 
 # ============================================================
-# 路径配置（与 results5_trans_shaply_heatmap.py 保持一致）
+# Path configuration (consistent with results5_trans_shaply_heatmap.py)
 # ============================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WQ_PATH = os.path.join(BASE_DIR, "data_WQ", "wq.xlsx")
 SHAP_BASE_DIR = os.path.join(BASE_DIR, "results", "Shapely for trans")
 OUTPUT_DIR = os.path.join(BASE_DIR, "results", "IMP")
 
-# 时间窗口定义 (左闭右开)
+# Time window definition (left-closed, right-open)
 TIME_WINDOWS = [
     ("2025-07-13", "2025-08-13", "Window1_0713-0813"),
     ("2025-08-13", "2025-09-13", "Window2_0813-0913"),
     ("2025-09-13", "2025-10-13", "Window3_0913-1013"),
 ]
 
-# Step → WQ 行号的偏移量：dataset window_size = 40,
-# 模型保存用 i+1 (= window_end), 所以 step_N 对应 wq.iloc[N + 39)
+# Step -> WQ row offset: dataset window_size = 40,
+# Models are saved with i+1 (= window_end), so step_N maps to wq.iloc[N+39]
 WINDOW_SIZE = 40
 
-MODEL_TYPES = ["ana_ano", "ox"]  # ★ 2block: ANA+ANO合并
+MODEL_TYPES = ["ana_ano", "ox"]  # 2block: ANA+ANO merged
 
 
 # ============================================================
-# 数据加载函数（复用 results5_trans_shaply_heatmap.py 的逻辑）
+# Data loading function (reuses the logic of results5_trans_shaply_heatmap.py)
 # ============================================================
 
 def load_wq_time_series(wq_path):
-    """从 wq.xlsx 读取 time 列"""
+    """Read the time column from wq.xlsx"""
     print(f"Loading WQ time data from: {wq_path}")
     df = pd.read_excel(wq_path)
     if 'time' in df.columns:
@@ -55,7 +70,7 @@ def load_wq_time_series(wq_path):
 
 
 def discover_shap_dirs(base_dir):
-    """扫描 Shapely for trans 目录，返回 [(step_num, dir_path)] 按编号升序排列"""
+    """Scan the Shapely for trans directory and return [(step_num, dir_path)] sorted ascending"""
     print(f"Scanning SHAP result directory: {base_dir}")
     entries = []
     pattern = re.compile(r'^step_(\d+)$')
@@ -81,8 +96,8 @@ def discover_shap_dirs(base_dir):
 
 
 def get_fixed_gene_order(first_shap_dir):
-    """从第一个 SHAP 结果中提取固定的基因顺序"""
-    csv_path = os.path.join(first_shap_dir, "SHAP_feature_importance_ana_ano.csv")  # ★ 2block
+    """Extract the fixed gene order from the first SHAP result"""
+    csv_path = os.path.join(first_shap_dir, "SHAP_feature_importance_ana_ano.csv")  # 2block
     df = pd.read_csv(csv_path)
     gene_list = df['gene'].tolist()
     print(f"  Fixed gene order ({len(gene_list)} genes)")
@@ -90,7 +105,7 @@ def get_fixed_gene_order(first_shap_dir):
 
 
 def load_and_build_matrix(shap_dirs, model_type, fixed_genes):
-    """构建 [n_genes x n_steps] SHAP 矩阵"""
+    """Build the [n_genes x n_steps] SHAP matrix"""
     n_genes = len(fixed_genes)
     n_steps = len(shap_dirs)
     matrix = np.zeros((n_genes, n_steps))
@@ -118,17 +133,17 @@ def load_and_build_matrix(shap_dirs, model_type, fixed_genes):
 
 
 # ============================================================
-# 主逻辑
+# Main logic
 # ============================================================
 
 def main():
-    # 创建输出目录
+    # Create the output directory
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     print(f"Output directory: {OUTPUT_DIR}\n")
 
-    # 1. 加载时间序列
+    # 1. Load the time series
     dates = load_wq_time_series(WQ_PATH)
-    # 转换为 datetime
+    # Convert to datetime
     date_list = []
     for d in dates:
         if isinstance(d, (datetime, pd.Timestamp)):
@@ -136,17 +151,17 @@ def main():
         else:
             date_list.append(pd.to_datetime(str(d)))
 
-    # 2. 发现所有 SHAP 目录
+    # 2. Discover all SHAP directories
     shap_dirs = discover_shap_dirs(SHAP_BASE_DIR)
     if not shap_dirs:
         print("ERROR: No SHAP directories found!")
         return
 
-    # 3. 获取固定基因顺序
+    # 3. Obtain the fixed gene order
     first_dir = shap_dirs[0][1]
     fixed_genes = get_fixed_gene_order(first_dir)
 
-    # 4. 为每种反应器类型构建矩阵
+    # 4. Build a matrix for each reactor type
     matrices = {}
     step_nums_all = {}
     for model_type in MODEL_TYPES:
@@ -156,7 +171,7 @@ def main():
 
     n_steps_total = len(shap_dirs)
 
-    # 4.5 为每个 step 计算对应的实际时间（与热力图脚本一致：step_N → wq.iloc[N+39]）
+    # 4.5 Compute the actual time of each step (same as the heatmap script: step_N -> wq.iloc[N+39])
     step_times = []
     for step_num, _ in shap_dirs:
         row_idx = step_num + WINDOW_SIZE - 1
@@ -166,8 +181,8 @@ def main():
             step_times.append(None)
     print(f"\nStep time range: {step_times[0]} ~ {step_times[-1]}")
 
-    # 5. 对每个时间窗口进行统计
-    # 同时收集每个窗口×类型的最大gene信息，用于最终汇总
+    # 5. Compute statistics for each time window
+    # Also collect the top gene info of each window x type for the final summary
     summary_records = []  # [(time_window, model_type, top_gene, max_IMP)]
 
     for win_start_str, win_end_str, win_name in TIME_WINDOWS:
@@ -178,7 +193,7 @@ def main():
         print(f"Time Window: {win_name} ({win_start_str} ~ {win_end_str})")
         print(f"{'='*60}")
 
-        # 找出属于该时间窗口的 step 列索引（使用 step 对应的实际时间）
+        # Find the step column indices belonging to this time window (using each step's actual time)
         window_indices = []
         for i, t in enumerate(step_times):
             if t is not None and win_start <= t < win_end:
@@ -190,34 +205,34 @@ def main():
             print("  WARNING: No data points in this window, skipping.")
             continue
 
-        # 6. 对每种反应器类型统计平均值
+        # 6. Average over each reactor type
         for model_type in MODEL_TYPES:
             mat = matrices[model_type]
 
-            # 提取该时间窗口的列，计算每行(gene)的平均值
+            # Take the columns of this time window and average each row (gene)
             window_data = mat[:, window_indices]  # shape: (n_genes, n_window_steps)
             gene_means = np.mean(window_data, axis=1)  # shape: (n_genes,)
 
-            # 构建 DataFrame
+            # Build the DataFrame
             df_result = pd.DataFrame({
                 'gene': fixed_genes,
                 'mean_SHAP': gene_means
             })
 
-            # 按 mean_SHAP 降序排列
+            # Sort by mean_SHAP descending
             df_result = df_result.sort_values('mean_SHAP', ascending=False).reset_index(drop=True)
 
-            # 保存为 Excel
+            # Save as Excel
             output_file = os.path.join(OUTPUT_DIR, f"{model_type}_{win_name}.xlsx")
             df_result.to_excel(output_file, index=False)
             print(f"  [{model_type}] Saved: {output_file}  ({len(df_result)} genes)")
 
-            # 收集该窗口×类型的最大gene信息
+            # Collect the top gene info of each window x type
             top_gene = df_result.iloc[0]['gene']
             max_imp = df_result.iloc[0]['mean_SHAP']
             summary_records.append((win_name, model_type, top_gene, max_imp))
 
-    # 7. 生成汇总表：每个时间窗口×反应器类型 的 top gene 和 IMP
+    # 11. Build the summary table: top genes and IMP per time window x reactor type
     print(f"\n{'='*60}")
     print("Generating summary table of top genes...")
     print(f"{'='*60}")
@@ -227,12 +242,12 @@ def main():
     ])
     summary_output = os.path.join(OUTPUT_DIR, "summary_top_genes.xlsx")
     
-    # 使用 openpyxl 保存，设置 Max_IMP 列为科学计数法格式
+    # Save with openpyxl and format the Max_IMP column in scientific notation
     with pd.ExcelWriter(summary_output, engine='openpyxl') as writer:
         df_summary.to_excel(writer, index=False, sheet_name='Sheet1')
         worksheet = writer.sheets['Sheet1']
-        # 设置 Max_IMP 列（第4列，即D列）为科学计数法格式
-        for row in range(2, len(df_summary) + 2):  # 从第2行开始（跳过表头）
+        # Format the Max_IMP column (column 4, i.e. column D) in scientific notation
+        for row in range(2, len(df_summary) + 2):  # start from row 2 (skip the header)
             cell = worksheet.cell(row=row, column=4)
             cell.number_format = '0.00E+00'
     

@@ -1,0 +1,1 @@
+Use the model from WqGene\step1_gene_model_trans_2block_FullTL\model\gene_model_transfer_learning

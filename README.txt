@@ -1,183 +1,227 @@
-# AI-Bio 项目说明文档
+# AI-Bio Project Documentation
+================================================================
 
-## 项目简介
-AI-Bio 是一个结合基因数据和水质数据的深度学习预测系统，用于预测污水处理过程中的水质参数。项目实现了多种模型架构（GeneModel、LSTM、MLP、WqLSTM），并提供了完整的训练/测试/迁移学习流程以及 SHAP 基因重要性分析。
+## 1. Overview
 
-## 项目结构
+AI-Bio is a deep-learning prediction system that combines **water quality time series (WQ)**
+with **functional gene expression profiles (n_gene / c_gene)** to predict the key water
+quality parameters of each reactor tank in a wastewater treatment process.
+
+Core ideas:
+- A two-branch network encodes the WQ sequence and the gene expression profile at the same
+  time, demonstrating the gain that gene information brings to water quality prediction.
+- **Per-step transfer learning (EWC incremental fine-tuning)** simulates an online operation
+  scenario.
+- Two sensitivity analyses, **SHAP / PDP**, track how gene importance evolves over time and
+  are cross-checked against the gene dynamic data (MT) to select genes that stay stable
+  across indicators.
+
+The model always produces 6 outputs: **DO (dissolved oxygen), AN (ammonia nitrogen) and
+NN (nitrate nitrogen) in the ANA / ANO / OX zones**.
+
+---
+
+## 2. Directory layout
 
 ```
 AI-Bio/
-├── data_Gene/                    # 基因数据（c_gene / n_gene 动态表达谱）
-│   ├── c_gene_dynamic_common.xlsx # c基因动态数据 (ana_ano/ox sheet)
-│   └── n_gene_dynamic_common.xlsx # n基因动态数据 (ana_ano/ox sheet)
-├── data_GeneM/                   # 迁移学习用基因数据
-├── data_WQ/                      # 水质数据
-│   ├── wq.xlsx                   # 原始水质数据（含时间戳）
-│   ├── wq_scaled.csv             # 标准化后的水质数据
-│   └── wq_scaleddict.npy         # 标准化参数字典
-├── results/                      # 分析结果输出目录
-│   ├── *.png                     # 图表（SHAP条形图、热力图等）
-│   └── *.csv                     # 数据结果（SHAP重要性分数等）
-├── step0_getGene/                # 基因数据处理
-├── step1_gene_model_trans/       # GeneModel 模型（主模型）
-│   ├── gene_model.py             # 模型定义 (GeneModel + Dataset)
-│   ├── train_gene_model.py      # 模型训练
-│   ├── test_gene_model.py       # 模型测试
-│   ├── test_gene_model_transfer_learning.py  # 迁移学习测试
-│   └── model/gene_model/        # 保存的模型权重 (.pth)
-├── step1_LSTM_model_trans/       # LSTM 基准模型
-├── step1_MLP_model_trans/        # MLP 基准模型
-├── step1_WqLSTM_model_trans/     # WqLSTM 基准模型
-├── step2_geneM_model_trans/      # GeneModel 迁移学习阶段
-├── extract_common_c_gene.py      # 提取公共c基因脚本
-├── extract_common_n_gene.py      # 提取公共n基因脚本
-│
-├── results1_training_test_Bollinger.py   # 训练/测试 Bollinger带分析
-├── results2_trans_test_Bolling.py        # 迁移测试 Bollinger带分析
-├── results3_geneEmbedding.py             # 基因嵌入可视化
-├── results3_geneSharply.py              # 基因层SHAP分析
-├── results3_geneSobo.py                 # 基因层Sobol敏感性分析
-├── results3_Sharply.py                  # 全模型SHAP分析（c_gene+WQ固定背景）
-├── results4_trans_shaply.py            # 迁移学习SHAP分析
-├── results5_trans_shaply_heatmap.py    # SHAP热力图绘制
-├── results6_shap_vs_wq_step1.py         # SHAP vs WQ相关性 Step1
-└── results6_shap_vs_wq_step2.py         # SHAP vs WQ相关性 Step2
+├── data_WQ/                              # water quality data
+│   ├── wq.xlsx                           # raw WQ data (time column, 15-min steps)
+│   ├── wq_scaled.csv                     # standardized WQ data (model input)
+│   └── wq_scaleddict.npy                 # standardization dict (for de-normalization)
+├── data_Gene/                            # source-domain gene data
+│   ├── n_gene_dynamic.xlsx               # raw n_gene expression profiles (ana_ano / ox)
+│   ├── c_gene_dynamic.xlsx               # raw c_gene expression profiles
+│   ├── n_gene_dynamic_common.xlsx        # genes shared with data_GeneM
+│   ├── c_gene_dynamic_common.xlsx
+│   └── remove_zero_rows.py               # small gene-table cleaning utility
+├── gene_ref/
+│   └── Gene_info.xlsx                    # KEGG KO -> gene name mapping (read by results5~9)
+├── data_GeneM/                           # target-domain gene data (for transfer learning)
+│   ├── n_gene_dynamic.xlsx / c_gene_dynamic.xlsx
+│   └── n_gene_dynamic_common.xlsx / c_gene_dynamic_common.xlsx
+├── step0_dataprocess/                    # data preprocessing notebook
+│   └── data_process.ipynb
+├── step1_gene_model_trans_2block_FullTL/ # main model: two-branch GeneModel (FullTL)
+│   ├── gene_model.py                     # model definition + Dataset + prepare_data
+│   ├── train_gene_model.py               # source-domain training
+│   ├── test_gene_model.py                # source-domain testing
+│   ├── test_gene_model_transfer_learning.py  # per-step transfer learning (EWC)
+│   └── model/, results/                  # weights (.pth) and prediction results
+├── step1_gene_model_trans_2block_FullTL - AEGeneRemoveWithTime/   # ablation: no gene input
+├── step1_gene_model_trans_2block_FullTL - AEWqRemoveWithTime/     # ablation: no WQ input
+├── step1_LSTM_model_trans/               # baseline: WQ-only LSTM
+├── step1_MLP_model_trans/                # baseline: WQ-only MLP
+├── results/                              # all figures and intermediate results
+│   ├── IMP/                              # per-window SHAP importance summaries
+│   ├── PDP/                              # per-window PDP sensitivity summaries
+│   ├── Shapely for trans/step_*/         # per-step SHAP results
+│   ├── PDP for trans/step_*/             # per-step PDP results
+│   └── preVStrue/                        # real vs predicted comparison figures
+├── *.py                                  # root-level analysis scripts (see section 4)
+├── requirements.txt
+└── README.txt
 ```
 
-## 核心功能
+> Note: every root-level script uses the **project root** as the working directory; internal
+> paths are resolved relative to the script location.
 
-### 1. 数据处理
-- 基因数据处理：从 Excel 动态基因表达数据中按月份匹配提取特征（KEGG ID）
-- 水质数据处理：多池（INF/ANA/ANO/OX/EFF）时间序列标准化预处理
-- 公共基因提取：跨样本筛选高一致性 c_gene / n_gene
+---
 
-### 2. 模型架构
+## 3. Environment setup
 
-| 模型 | 输入特征 | 目录 | 说明 |
-|------|----------|------|------|
-| **GeneModel** | WQ(19维×40步) + n_gene(21维×3池) + c_gene(1205维×3池) | step1_gene_model_trans | 主模型，含基因嵌入层 |
-| **LSTMModel** | WQ 时间序列 | step1_LSTM_model_trans | LSTM 基准 |
-| **MLPModel** | WQ 时间序列展平 | step1_MLP_model_trans | MLP 基准 |
-| **WqLSTMModel** | WQ 时间序列 | step1_WqLSTM_model_trans | 纯WQ-LSTM |
-
-所有模型均为多输出（ANA/ANO/OX 各 3 维 = DO, AN, NN）。
-
-### 3. 训练与测试流程
-- **step1**: 在原始数据集上训练各模型
-- **step2**: 使用 data_GeneM 数据进行迁移学习微调
-- 支持早停机制、学习率自动调整
-
-### 4. 可解释性分析
-
-#### SHAP 分析
-- **results3_Sharply.py**: 全模型 KernelSHAP，n_gene 作为可变输入，
-  c_gene 与 WQ 固定为训练集均值背景，分别对 ANA/ANO/OX 输出计算 SHAP 值
-- **results3_geneSharply.py**: 仅对基因嵌入层的 SHAP 分析
-- **results4_trans_shaply.py**: 迁移学习模型的 SHAP 分析
-- **results5_trans_shaply_heatmap.py**: SHAP 结果热力图可视化
-
-#### Sobol 敏感性分析
-- **results3_geneSobo.py**: 基于 SALib 的 Sobol 指数计算
-
-#### 相关性分析
-- **results6_shap_vs_wq_*.py**: SHAP 重要性 vs WQ 参数的统计相关性
-
-## 使用方法
-
-### 1. 环境配置
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. 数据准备
-确保以下文件存在：
-- `data_Gene/c_gene_dynamic_common.xlsx` — c基因动态表达谱
-- `data_Gene/n_gene_dynamic_common.xlsx` — n基因动态表达谱
-- `data_WQ/wq.xlsx` — 原始水质数据（含 time 列）
-- `data_WQ/wq_scaled.csv` — 标准化后水质数据
-
-### 3. 模型训练
-```bash
-# 训练主模型 (GeneModel)
-cd step1_gene_model_trans
-python train_gene_model.py
-
-# 训练基准模型 (可选)
-cd ../step1_LSTM_model_trans && python train_LSTM_model.py
-cd ../step1_MLP_model_trans && python train_MLP_model.py
-```
-
-### 4. 模型测试
-```bash
-cd step1_gene_model_trans
-python test_gene_model.py
-python test_gene_model_transfer_learning.py   # 迁移学习测试
-```
-
-### 5. SHAP / 敏感性分析
-```bash
-# 全模型SHAP分析（c_gene+WQ固定为训练集均值）
-python results3_Sharply.py
-
-# 基因层SHAP分析
-python results3_geneSharply.py
-
-# Sobol敏感性分析
-python results3_geneSobo.py
-
-# 迁移学习SHAP分析
-python results4_trans_shaply.py
-
-# SHAP热力图
-python results5_trans_shaply_heatmap.py
-
-# SHAP vs WQ相关性分析
-python results6_shap_vs_wq_step1.py
-python results6_shap_vs_wq_step2.py
-```
-
-### 6. 其他分析
-```bash
-# 训练/测试Bollinger带
-python results1_training_test_Bollinger.py
-python results2_trans_test_Bolling.py
-
-# 基因嵌入可视化
-python results3_geneEmbedding.py
-```
-
-## 技术栈
-
-| 类别 | 技术 |
-|------|------|
-| 编程语言 | Python 3.12+ |
-| 深度学习框架 | PyTorch >= 2.0 |
-| 数据处理 | pandas, numpy, openpyxl |
-| 数据可视化 | matplotlib |
-| 统计分析 | scipy, scikit-learn |
-| 模型解释 | SHAP >= 0.42 |
-| 敏感性分析 | SALib >= 1.4 |
-
-## 关键配置参数 (results3_Sharply.py)
-
-| 参数 | 值 | 说明 |
-|------|-----|------|
-| WINDOW_SIZE | 40 | 时间窗口长度 |
-| N_GENE_DIM | 21 | n_gene 维度 |
-| C_GENE_DIM | 1205 | c_gene 维度 |
-| NUM_SHAP_RUNS | 10 | SHAP 采样运行次数 |
-| BG_SAMPLES | 20 | 背景数据样本数 |
-| c_gene 背景 | 训练集均值（按月加权） | 非零值 |
-| WQ 背景 | 训练集均值 | 非零值 |
-
-## 注意事项
-
-1. 项目使用相对路径，请从项目根目录运行脚本
-2. SHAP 分析（尤其是全模型）计算量较大，建议在 GPU 环境下运行
-3. c_gene 背景值通过读取训练集前 30% 样本对应的月份基因数据加权平均得到
-4. 模型权重文件较大（每个模型约数百 MB），确保有足够磁盘空间
+- Python >= 3.9 (3.10+ recommended)
+- With an NVIDIA GPU, install the CUDA-enabled `torch` build following the official command
+- Before the first Excel-related run, make sure both `openpyxl` (.xlsx) and `xlrd` (.xls) are installed
 
 ---
 
-*版本：2.0.0*
-*最后更新：2026-07-10*
+## 4. Root-level scripts (in execution order)
+
+| Step | Script | Purpose | Main output |
+|------|--------|---------|-------------|
+| 0 | `extract_common_c_gene.py` / `extract_common_n_gene.py` | Keep only the KEGG rows shared by data_Gene and data_GeneM so both domains have identical feature dimensions | `*_dynamic_common.xlsx` |
+| 1 | `step1_*/train_*.py` | Train the main model and the baselines (source domain) | `best_*.pth`, `training_history_with_lr.npy` |
+| 2 | `results1_training_test_Bollinger.py` | Three-model source-domain comparison (loss curves + error Bollinger bands + MSE distribution) | `results/model_performance_comparison.png` |
+| 3 | `plot_all_features_comparison.py` | One 4x3 all-feature "real vs predicted" figure per model | `results/preVStrue/*.png` |
+| 4 | `find_max_error_timepoint.py` | Locate each model's maximum-error time point and convert it to a date (console only) | - |
+| 5 | `step1_*/test_*_transfer_learning.py` | Per-step transfer learning (EWC), saving the weights and predictions of every step | `model_after_transfer_step_*.pth`, `prediction.csv` |
+| 6 | `results2_trans_test_Bollinger.py` | Three-model comparison in the transfer stage | `results/model_transfer_performance_comparison.png` |
+| 7 | `results3_geneEmbedding.py` | Per-dimension time series of the gene fusion vectors | `results/{fusion}_time_series.png`, `combined_fusion_vectors.png` |
+| 8 | `results4_trans_shaply.py` | Per-step gene SHAP computation | `results/Shapely for trans/step_*/` |
+| 8 | `results4_trans_PDP.py` | Per-step gene PDP computation (mirrors the SHAP version) | `results/PDP for trans/step_*/` |
+| 9 | `results5_SHAP_time_window_stats.py` | Average SHAP over the three time windows -> IMP table | `results/IMP/*.xlsx` |
+| 9 | `results5_PDP_time_window_stats.py` | Average PDP over the three time windows -> LEF table | `results/PDP/*.xlsx` |
+| 10 | `results5_trans_SHAPPDP_heatmap.py` | Heatmap of SHAP/PDP evolution over transfer steps + cosine similarity | `results/shap_pdp_trans_heatmap_raw.png` |
+| 11 | `results6_trans_IMP_PDP_barplot.py` | IMP / PDP / MT horizontal bar comparison (two windows x two zones) | `results/imp_pdp_barplot_comparison.png` |
+| 12 | `results7_top10gene.py` | Top10 genes per Period x zone x index, plus the genes shared by all three indices | `results/top10gene.xlsx` |
+| 13 | `results8_PDP.py` | PDP composite figure (heatmaps + cosine curve + bar charts) | `results/PDP_analysis_composite.png` |
+| 13 | `results9_SHAP.py` | SHAP composite figure (heatmaps + IMP bars + MT bars + Venn diagrams) | `results/SHAP_analysis_composite.png`, `results/top10genev2.xlsx` |
+| 14 | `results10_FFT.py` | Frequency-domain error analysis of the ablation models (FFT) + Bollinger bands + EFF ammonia comparison | `results/results10_FFT.png` |
+| 14 | `results10_FFT_pred.py` | All 12 output dimensions of the ablation models | `results/results10_FFT_pred.png` |
+
+Every script header documents its **Purpose / Input / Output / Usage**.
+
+---
+
+## 5. Full workflow
+
+### 5.1 Data preparation
+
+Make sure the following files exist:
+- `data_WQ/wq.xlsx`, `data_WQ/wq_scaled.csv`, `data_WQ/wq_scaleddict.npy`
+- `data_Gene/n_gene_dynamic_common.xlsx`, `data_Gene/c_gene_dynamic_common.xlsx`
+- `data_GeneM/n_gene_dynamic.xlsx` (MT dynamic data, used by results6/9)
+- `gene_ref/Gene_info.xlsx` (KEGG -> gene name mapping, in the root-level `gene_ref/` folder)
+
+### 5.2 Train the main model
+
+```bash
+cd step1_gene_model_trans_2block_FullTL
+python train_gene_model.py                     # source-domain training
+python test_gene_model.py                      # source-domain test (writes prediction.csv)
+python test_gene_model_transfer_learning.py    # per-step transfer learning
+```
+
+### 5.3 Train the baselines / ablations (optional, for comparison)
+
+```bash
+cd ../step1_LSTM_model_trans
+python train_LSTM_model.py
+python test_LSTM_model.py
+python test_LSTM_model_transfer_learning.py
+```
+
+The ablation models must first generate `prediction.csv` by running
+`test_gene_model_transfer_learning.py` in their own folders before
+`results10_FFT*.py` can read them.
+
+### 5.4 Sensitivity analysis (SHAP / PDP)
+
+```bash
+cd ..                                  # back to the project root
+python results4_trans_shaply.py        # per-step SHAP (heavy, a GPU is recommended)
+python results4_trans_PDP.py           # per-step PDP
+python results5_SHAP_time_window_stats.py   # -> results/IMP/
+python results5_PDP_time_window_stats.py    # -> results/PDP/
+```
+
+### 5.5 Visualization
+
+```bash
+python results5_trans_SHAPPDP_heatmap.py
+python results6_trans_IMP_PDP_barplot.py
+python results7_top10gene.py
+python results8_PDP.py
+python results9_SHAP.py
+```
+
+### 5.6 Error analysis
+
+```bash
+python results1_training_test_Bollinger.py
+python results2_trans_test_Bollinger.py
+python results10_FFT.py
+python results10_FFT_pred.py
+```
+
+---
+
+## 6. Key parameters
+
+| Parameter | Location | Value | Description |
+|-----------|----------|-------|-------------|
+| `WINDOW_SIZE` | gene_model.py / results scripts | 40 | Time window length (steps, 15 min each, about 10 hours) |
+| `N_GENE_DIM` | gene_model.py | 21 | n_gene input dimension |
+| `C_GENE_DIM` | gene_model.py | 1205 | c_gene input dimension |
+| `hidden_dim` | train/test scripts | 64 | Hidden size (must match the weight file) |
+| `batch_size` | train_gene_model.py | 256 | Training batch size |
+| `EWC_LAMBDA` | test_gene_model_transfer_learning.py | 1000 | EWC regularization strength; larger means less forgetting |
+| `transfer_window` / `transfer_epochs` | same as above | 40 / 30 | Data window and fine-tuning epochs per transfer step |
+| `window_size` / `num_std` | results1/2 Bollinger | 40 / 3 | Rolling window length and band width multiplier |
+| `VENN_RX/RY/DX` | results9_SHAP.py | 0.42/0.30/0.22 | Ellipse size and spacing of the hand-drawn Venn diagrams |
+
+---
+
+## 7. Notes and FAQ
+
+1. **Root-level scripts must run from the project root** (`cd AI-Bio && python results9_SHAP.py`).
+   Scripts inside the step1 folders must be run from their own directory, because they read
+   data through `../data_*`.
+2. **OpenMP duplicate-library error**: all scripts already set `KMP_DUPLICATE_LIB_OK=TRUE`.
+   If the error persists, also set `OMP_NUM_THREADS=1`.
+3. **`hidden_dim` must match the checkpoint**: `test_gene_model.py` defaults to
+   `hidden_dim=256`, while the saved `best_gene_model.pth` actually uses `hidden_dim=64`.
+   If loading fails, follow the dimension stored in the checkpoint (the transfer-learning
+   script already uses 64).
+4. **SHAP / PDP are expensive**: computing every transfer step (about 100 checkpoints) takes a
+   long time. A GPU is recommended, or thin out the steps with the `interval` argument of
+   `discover_models`.
+5. **Time alignment rule**: `step_N` maps to row `N + WINDOW_SIZE - 1` of `wq.xlsx`. The
+   `time_step` values of all three models have been unified to an absolute index so they can be
+   compared directly.
+6. **Figure output**: all figures are saved at 200-300 dpi under `results/` (and its
+   subfolders), with `bbox_inches='tight'` to remove the extra margins.
+
+---
+
+## 8. Tech stack
+
+| Category | Technology |
+|----------|------------|
+| Language | Python >= 3.9 |
+| Deep learning | PyTorch >= 2.0 |
+| Data processing | pandas, numpy, openpyxl, xlrd |
+| Visualization | matplotlib |
+| Numerics / statistics | scipy |
+| Model interpretation | SHAP >= 0.42 (KernelSHAP), PDP (custom implementation) |
+| Incremental learning | EWC (elastic weight consolidation, custom implementation) |
+
+---
+
+*Version: 3.0.0*
+*Last updated: 2026-11-05*

@@ -1,3 +1,22 @@
+"""
+test_LSTM_model_transfer_learning.py - LSTM per-step transfer learning
+=========================================================
+Purpose:
+    keeps the same transfer workflow as GeneModel as a reference baseline: the test segment is split chronologically into
+    multiple transfer steps, fine-tuning the LSTM on the most recent window at each step and saving a checkpoint,
+    used to verify the extra gain of "adding gene information" in incremental / transfer scenarios.
+Main parameters:
+    transfer_batch_size = 64, hidden_dim = 64 (must match the pretrained weights)
+Input:
+    model/LSTM_model/best_LSTM_model.pth
+Output:
+    model/LSTM_model/LSTM_model_transfer_learning.pth  weights after transfer learning
+    results/LSTM_model_transfer_learning/prediction.csv predictions after transfer learning
+    results/LSTM_model_transfer_learning/*.png          regression plot and time series plot
+Usage:
+    cd step1_LSTM_model_trans && python test_LSTM_model_transfer_learning.py
+"""
+
 import torch
 import pandas as pd
 import numpy as np
@@ -78,12 +97,12 @@ def test_transfer_learning():
         optimizer = torch.optim.Adam(transfer_params, lr=5e-5, weight_decay=1e-5)  # Lower learning rate
 
         # Split dataset using same indices as test_gene_model
-        train_size = int(0.3 * len(dataset))  # 前0%-30%的数据
-        val_size = int(0.1 * len(dataset))  # 30%-35%的数据
+        train_size = int(0.3 * len(dataset))  # the first 0%-30% of the data
+        val_size = int(0.1 * len(dataset))  # the 30%-40% of the data
         
         # Test data starts from 30% of data (train_size)
         start_idx = train_size
-        test_size = len(dataset) - start_idx  # 70%的数据
+        test_size = len(dataset) - start_idx  # 70% of the data
         
         print(f"Test data size: {test_size} samples (from {start_idx+1} to {len(dataset)})")
         print(f"  Total samples: {len(dataset)}")
@@ -286,14 +305,14 @@ def test_transfer_learning():
         prediction_df = pd.DataFrame(prediction_data)
         prediction_path = os.path.join(results_dir, "prediction.csv")
         prediction_df.to_csv(prediction_path, index=False)
-        print(f"✅ Predictions saved: {prediction_path}")
+        print(f"Predictions saved: {prediction_path}")
         
         # Save Bollinger Bands data to CSV
         if bollinger_bands:
             bb_df = pd.DataFrame(bollinger_bands)
             bb_path = os.path.join(results_dir, "bollinger_bands.csv")
             bb_df.to_csv(bb_path, index=False)
-            print(f"✅ Bollinger Bands saved: {bb_path}")
+            print(f"Bollinger Bands saved: {bb_path}")
         
         # Save fusion vectors to NPY files
         for key, vectors in fusion_vectors.items():
@@ -301,7 +320,7 @@ def test_transfer_learning():
                 vectors_array = np.array(vectors)
                 npy_path = os.path.join(results_dir, f"{key}.npy")
                 np.save(npy_path, vectors_array)
-                print(f"✅ Fusion vectors saved: {npy_path}")
+                print(f"Fusion vectors saved: {npy_path}")
 
         # Generate prediction vs real regression plot
         print("\nGenerating prediction vs real regression plot...")
@@ -330,7 +349,7 @@ def test_transfer_learning():
             regression_plot_path = os.path.join(results_dir, "prediction_vs_real.png")
             plt.savefig(regression_plot_path)
             plt.close()
-            print(f"✅ Regression plot saved: {regression_plot_path}")
+            print(f"Regression plot saved: {regression_plot_path}")
         except Exception as e:
             print(f"Error generating regression plot: {e}")
 
@@ -361,7 +380,7 @@ def test_transfer_learning():
             timeseries_plot_path = os.path.join(results_dir, "time_series_prediction.png")
             plt.savefig(timeseries_plot_path)
             plt.close()
-            print(f"✅ Time series plot saved: {timeseries_plot_path}")
+            print(f"Time series plot saved: {timeseries_plot_path}")
         except Exception as e:
             print(f"Error generating time series plot: {e}")
 
@@ -394,9 +413,9 @@ def test_transfer_learning():
         # Save MSE scores
         mse_path = os.path.join(results_dir, "mse_scores.csv")
         mse_df.to_csv(mse_path, index=False)
-        print(f"✅ MSE scores saved: {mse_path}")
+        print(f"MSE scores saved: {mse_path}")
 
-        print("\n🎉 Transfer learning test completed successfully!")
+        print("\n Transfer learning test completed successfully!")
         print(f"Results saved to: {results_dir}")
         
     except Exception as e:

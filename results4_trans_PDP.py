@@ -1,3 +1,25 @@
+"""
+results4_trans_PDP.py - gene PDP (partial dependence) sensitivity analysis of the transfer-learned models
+=========================================================
+Purpose:
+    compute the SHAP values of the gene input dims for each checkpoint saved during transfer learning
+    PDP (Partial Dependence Plot) sensitivity, tracking how gene contributions evolve along the transfer steps:
+    1) Extract the gene projection sub-model (GeneProjModel) from the full GeneModel
+    2) Perturb each gene dimension over a grid and average the output change -> PDP curve
+    3) Each checkpoint writes a PDP figure and a feature importance CSV
+    4) Reusable by results5_trans_SHAPPDP_heatmap.py / results6_trans_IMP_PDP_barplot.py
+Input:
+    .pth checkpoints under step1_gene_model_trans_2block_FullTL/model/...
+    gene_ref/Gene_info.xlsx (KEGG ID -> gene name mapping)
+Output:
+    results/PDP for trans/step_{N}/PDP_*.png
+    results/PDP for trans/step_{N}/PDP_feature_importance_{model}.csv
+Usage:
+    python results4_trans_PDP.py            # run from the project root (a GPU is recommended)
+Note:
+    results4_trans_shaply.py is the SHAP version of the same workflow; both produce interchangeable outputs
+"""
+
 import torch
 import torch.nn as nn
 import numpy as np
@@ -20,8 +42,8 @@ torch.manual_seed(42)
 torch.cuda.manual_seed_all(42)
 
 # Add step1_gene_model_trans_2block directory to Python path
-sys.path.append(os.path.join(os.path.dirname(__file__), 'step1_gene_model_trans_2block'))
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'step1_gene_model_trans_2block'))
+sys.path.append(os.path.join(os.path.dirname(__file__), 'step1_gene_model_trans_2block_FullTL'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'step1_gene_model_trans_2block_FullTL'))
 
 from gene_model import GeneModel
 
@@ -47,16 +69,16 @@ def extract_gene_projection_models(gene_model, device):
         def forward(self, x):
             return self.proj(x)
 
-    # ★ 2block模型: ana_ano合并(输出6维), ox(输出3维)
+    # 2block model: ana_ano merged (6-dim output), ox (3-dim output)
     gene_n_dim = 21
     hidden_dim = 64
     
     models = {
-        'ana_ano': GeneProjModel(gene_n_dim, hidden_dim, 6).to(device),  # ★ 合并ANA+ANO，输出6维
+        'ana_ano': GeneProjModel(gene_n_dim, hidden_dim, 6).to(device),  # ANA+ANO merged, 6-dim output
         'ox': GeneProjModel(gene_n_dim, hidden_dim, 3).to(device)
     }
 
-    # Copy weights from trained gene model for ana_ano (★ 2block新层名)
+    # Copy the weights of the trained gene model for ana_ano (2block layer names)
     ana_ano_state_dict = models['ana_ano'].state_dict()
     gene_ana_ano_state_dict = gene_model.gene_n_proj_ana_ano.state_dict()
     for key in ana_ano_state_dict.keys():
@@ -64,7 +86,7 @@ def extract_gene_projection_models(gene_model, device):
             ana_ano_state_dict[key] = gene_ana_ano_state_dict[key]
     models['ana_ano'].load_state_dict(ana_ano_state_dict)
 
-    # Copy weights for ox (层名不变)
+    # Copy the weights for ox (layer names unchanged)
     ox_state_dict = models['ox'].state_dict()
     gene_ox_state_dict = gene_model.gene_n_proj_ox.state_dict()
     for key in ox_state_dict.keys():
@@ -96,7 +118,7 @@ def compute_pdp(model, feature_idx, grid_points=50, n_samples=200, device='cpu',
     # Generate feature value grid (assuming normalized input range [-1, 1])
     feature_values = np.linspace(-1, 1, grid_points)
     
-    # Generate background data for other features (★ 2block: 21个n_gene特征)
+    # Generate background data for the other features (2block: the 21 n_gene features)
     np.random.seed(42)
     background_data = np.random.uniform(-1, 1, size=(n_samples, 21))
     
@@ -112,8 +134,8 @@ def compute_pdp(model, feature_idx, grid_points=50, n_samples=200, device='cpu',
             x_tensor = torch.tensor(test_data, dtype=torch.float32).to(device)
             outputs = model(x_tensor).cpu().numpy()  # Shape: (n_samples, output_dim)
             
-            # ★ Average over all samples and all output dimensions
-            avg_output = np.mean(outputs)  # 取所有输出的均值
+            # Average over all samples and all output dimensions
+            avg_output = np.mean(outputs)  # mean over all outputs
             pdp_values.append(avg_output)
     
     return feature_values, np.array(pdp_values)
@@ -131,7 +153,7 @@ def collect_pdp_results(models, device):
     num_features = 21
     grid_points = 50
     
-    # ★ 2block: 不同模型的输出维度
+    # 2block: output dimensions of the different models
     model_output_dims = {'ana_ano': 6, 'ox': 3}
     
     for model_name, model in models.items():
@@ -170,7 +192,7 @@ def get_actual_gene_names():
     if os.path.exists(gene_file):
         try:
             df = pd.read_excel(gene_file, sheet_name='ana_ano')
-            # 最后一列是 KEGG 描述，提取 K 开头编号
+            # The last column holds the KEGG description; extract the K-prefixed id
             kegg_ids = df.iloc[:, -1].astype(str).str.extract(r'(K\d+)')[0]
             kegg_ids = kegg_ids.dropna().tolist()
             gene_names = kegg_ids[:21]
@@ -198,17 +220,17 @@ def plot_pdp_results(all_results, output_dir):
     label_size = 18
     tick_label_size = 12
     
-    model_names = ['ana_ano', 'ox']  # ★ 2block: 合并ANA+ANO
+    model_names = ['ana_ano', 'ox']  # 2block: ANA+ANO merged
     model_labels = {
-        'ana_ano': 'ANA+ANO (Anaerobic + Anoxic Tank)',  # ★ 2block新标签
+        'ana_ano': 'ANA+ANO (Anaerobic + Anoxic Tank)',  # 2block new label
         'ox': 'OX (Aerobic Tank)'
     }
     
     # ===== Figure 1: Feature Importance Bar Charts =====
-    plt.figure(figsize=(15, 12))  # ★ 调整高度适应2行
+    plt.figure(figsize=(15, 12))  # adjust the height for 2 rows
     
     for i, model_name in enumerate(model_names):
-        plt.subplot(2, 1, i + 1)  # ★ 从3行改为2行
+        plt.subplot(2, 1, i + 1)  # 3 rows reduced to 2
         results = all_results[model_name]
         mean_feature_importance = results['mean_feature_importance']
         gene_names = results['gene_names']
@@ -277,7 +299,7 @@ def plot_pdp_results(all_results, output_dir):
 
 def save_pdp_csv(all_results, output_dir):
     """Save PDP feature importance to CSV files"""
-    for model_name in ['ana_ano', 'ox']:  # ★ 2block模型名
+    for model_name in ['ana_ano', 'ox']:  # 2block model names
         results = all_results[model_name]
         mean_feature_importance = results['mean_feature_importance']
         gene_names = results['gene_names']
@@ -399,7 +421,7 @@ def main():
     
     # Paths
     model_dir = os.path.join(
-        'step1_gene_model_trans_2block', 'model', 'gene_model_transfer_learning'  # ★ 2block路径
+        'step1_gene_model_trans_2block', 'model', 'gene_model_transfer_learning'  # 2block path
     )
     base_output_dir = os.path.join('results', 'PDP for trans')  # Changed from Shapely for trans
 

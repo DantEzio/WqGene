@@ -1,10 +1,19 @@
 """
-对每个模型的每个 feature 绘制 真实值 vs 预测值 对比图。
-每个模型生成一张图，图中包含全部 12 个 feature 的子图（4区域×3指标），
-动态查找全局最高误差时间节点并通过 textbox 标注月日。
-所有图片保存至 results/preVStrue/ 目录。
-
-用法: python plot_all_features_comparison.py
+plot_all_features_comparison.py - "real vs predicted" comparison for every output feature
+=========================================================
+Purpose:
+    draw a 4-row x 3-col comparison figure per model covering all 12 output features
+    (four zones Anaerobic / Anoxic / Oxic / Effluent x three indicators DO / AN / NN):
+    1) Overlay the truth and prediction curves in each panel for a direct visual comparison
+    2) Automatically locate the global maximum-error time point and annotate the month-day with a textbox
+    3) Label the zones on the left; the x axis is the actual date and only the bottom row shows the Date label
+Input:
+    step1_*/.../prediction.csv (real columns contain true/real, prediction columns contain pred)
+    data_WQ/wq.xlsx (time column, used to convert the time axis)
+Output:
+    results/preVStrue/{model name}_all_features.png
+Usage:
+    python plot_all_features_comparison.py       # run from the project root
 """
 
 import numpy as np
@@ -19,7 +28,7 @@ from datetime import datetime, timedelta
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 
 # ============================================================
-# 字体设置（加大字体）
+# Font setup (larger fonts)
 # ============================================================
 config = {
     "font.family": 'serif',
@@ -34,10 +43,10 @@ tick_size = 13
 legend_size = 11
 
 # ============================================================
-# 模型配置：TL 版本 + 普通训练版本
+# Model configuration: TL version plus the plain training version
 # ============================================================
 MODEL_CONFIGS = {
-    # --- TL (迁移学习) 版本 ---
+    # --- TL (transfer learning) version ---
     'Gene_TL': {
         'path': 'step1_gene_model_trans_2block/results/gene_model_transfer_learning/prediction.csv',
         'title': 'WqGene-LL',
@@ -56,7 +65,7 @@ MODEL_CONFIGS = {
         'base_hue': '#1a9641',
         'marker_color': '#d62728',
     },
-    # --- 普通 Training 版本 ---
+    # --- Plain training version ---
     'Gene_Train': {
         'path': 'step1_gene_model_trans_2block/results/gene_model/prediction.csv',
         'title': 'WqGene',
@@ -77,31 +86,31 @@ MODEL_CONFIGS = {
     },
 }
 
-# 画图起始日期
+# Start date of the plots
 PLOT_START_DATE = datetime(2025, 7, 13)
 
-# 12 个 feature 的名称和分组（★ 2block: Gene模型 ANA+ANO合并）
-# 原始4区域(ANA, ANO, OX, EFF) 用于 LSTM/MLP
-# 合并3区域(ANA_ANO, OX, EFF) 用于 Gene 模型
+# Names and grouping of the 12 features (2block: Gene model merges ANA+ANO)
+# Original 4 regions (ANA, ANO, OX, EFF) used by LSTM/MLP
+# Merge the 3 regions (ANA_ANO, OX, EFF) for the Gene model
 FEATURE_GROUPS_ORIGINAL = ['ANA', 'ANO', 'OX', 'EFF']
 FEATURE_GROUPS_MERGED = ['ANA_ANO', 'OX', 'EFF']
-FEATURE_INDICES_ORIGINAL = [1, 2, 3]  # LSTM/MLP: 每区域3指标
-FEATURE_INDICES_MERGED = [1, 2, 3, 4, 5, 6]  # Gene: ana_ano有6指标, ox/eff各3指标
+FEATURE_INDICES_ORIGINAL = [1, 2, 3]  # LSTM/MLP: 3 indicators per region
+FEATURE_INDICES_MERGED = [1, 2, 3, 4, 5, 6]  # Gene: ana_ano has 6 indicators, ox/eff 3 each
 
-# Feature 显示名（含上下标）：DO, NH₄⁺, NO₃⁻
+# Feature display names (with sub/superscripts): DO, NH4+, NO3-
 FEAT_DISPLAY_NAMES = {
     1: r'DO (mg/L)',
     2: r'NH$_{4}^{+}$ (mg/L)',
     3: r'NO$_{3}^{-}$ (mg/L)',
 }
 
-# EFF 区域第1个特征特殊名称：COD
+# Special name of the first EFF feature: COD
 EFF_FEAT1_NAME = r'COD (mg/L)'
 
-# 反归一化参数：每个 (region, feat_idx) 对应的原始最大值（Min-Max, raw_min=0）
-# ★ 2block: Gene模型使用 ANA_ANO 合并键
+# De-normalization parameters: original max value of each (region, feat_idx) (Min-Max, raw_min=0)
+# 2block: the Gene model uses the merged ANA_ANO key
 DENORM_MAX = {
-    # --- 原始4区域 (LSTM/MLP) ---
+    # --- Original 4 regions (LSTM/MLP) ---
     ('ANA', 1): 0.30,   # DO-ANA
     ('ANA', 2): 52.73,  # AN-ANA
     ('ANA', 3): 1.69,   # NN-ANA
@@ -114,35 +123,35 @@ DENORM_MAX = {
     ('EFF', 1): 23.75,  # COD-EFF
     ('EFF', 2): 13.81,  # TN-EFF
     ('EFF', 3): 3.39,   # AN-EFF
-    # --- 合并区域 (Gene 2block: ANA+ANO → ANA_ANO, 6维输出) ---
-    ('ANA_ANO', 1): 0.30,   # DO-ANA (原ANA_1)
-    ('ANA_ANO', 2): 52.73,  # AN-ANA (原ANA_2)
-    ('ANA_ANO', 3): 1.69,   # NN-ANA (原ANA_3)
-    ('ANA_ANO', 4): 0.70,   # DO-ANO (原ANO_1)
-    ('ANA_ANO', 5): 50.69,  # AN-ANO (原ANO_2)
-    ('ANA_ANO', 6): 10.72,  # NN-ANO (原ANO_3)
+    # --- Merged region (Gene 2block: ANA+ANO -> ANA_ANO, 6-dim output) ---
+    ('ANA_ANO', 1): 0.30,   # DO-ANA (originally ANA_1)
+    ('ANA_ANO', 2): 52.73,  # AN-ANA (originally ANA_2)
+    ('ANA_ANO', 3): 1.69,   # NN-ANA (originally ANA_3)
+    ('ANA_ANO', 4): 0.70,   # DO-ANO (originally ANO_1)
+    ('ANA_ANO', 5): 50.69,  # AN-ANO (originally ANO_2)
+    ('ANA_ANO', 6): 10.72,  # NN-ANO (originally ANO_3)
 }
 
-# 区域显示名（★ 2block: 增加 ANA_ANO 合并显示名）
+# Region display names (2block adds the merged ANA_ANO name)
 REGION_DISPLAY_NAMES = {
     'ANA': 'Anaerobic',
     'ANO': 'Anoxic',
-    'ANA_ANO': 'Anaerobic & Anoxic',  # ★ 2block 合并
+    'ANA_ANO': 'Anaerobic & Anoxic',  # 2block merged
     'OX':  'Oxic',
     'EFF': 'Effluent',
 }
 
 
 def hex_to_rgb(hex_color):
-    """将十六进制颜色转为 RGB 元组 (0~1)"""
+    """Convert a hex color to an RGB tuple (0-1)"""
     hex_color = hex_color.lstrip('#')
     return tuple(int(hex_color[i:i + 2], 16) / 255 for i in (0, 2, 4))
 
 
 def generate_shades(base_hex, n_shades=12):
     """
-    基于基础色生成 n_shades 组深浅配对 (real_color, pred_color)。
-    同一模型内不同子图用深浅区分，保留色系一致性。
+    generate n_shades dark/light pairs (real_color, pred_color) from a base color.
+    panels of the same model differ in shade to keep the palette consistent.
     
     Returns:
         list of (real_hex, pred_hex) tuples
@@ -151,11 +160,11 @@ def generate_shades(base_hex, n_shades=12):
     
     pairs = []
     for i in range(n_shades):
-        # real: 从 base 到较深的渐变
+        # real: gradient from the base color to darker shades
         depth_factor = 0.55 + 0.45 * (i / max(1, n_shades - 1))
         real_rgb = np.clip(base_rgb * depth_factor, 0, 1)
         
-        # pred: 从 base 到较浅的渐变（用互补亮度）
+        # pred: gradient from the base color to lighter shades (complementary brightness)
         light_factor = 1.15 + 0.5 * (i / max(1, n_shades - 1))
         pred_rgb = np.clip(base_rgb + (1 - base_rgb) * (light_factor - 1) * 0.5, 0, 1)
         
@@ -168,17 +177,17 @@ def generate_shades(base_hex, n_shades=12):
 
 
 def load_dates():
-    """从 wq.xlsx 读取实际日期列表"""
+    """Read the list of actual dates from wq.xlsx"""
     try:
         df = pd.read_excel('data_WQ/wq.xlsx')
         return df['time'].tolist()
     except Exception as e:
-        print(f"警告: 无法读取 wq.xlsx: {e}")
+        print(f"Warning: cannot read wq.xlsx: {e}")
         return None
 
 
 def generate_dates_for_plot(time_steps, actual_dates):
-    """将 time_step 映射为实际日期"""
+    """Map time_step to the actual date"""
     plot_dates = []
     for ts in time_steps:
         ts_int = int(ts)
@@ -200,7 +209,7 @@ def generate_dates_for_plot(time_steps, actual_dates):
 
 
 def format_date_short(date_obj):
-    """格式化日期用于刻度标签（短格式 mm-dd）"""
+    """Format a date for tick labels (short mm-dd form)"""
     if hasattr(date_obj, 'strftime'):
         return date_obj.strftime('%m-%d')
     try:
@@ -211,11 +220,11 @@ def format_date_short(date_obj):
 
 def find_model_max_error(path, is_tl=False):
     """
-    找出单个模型的最高误差时间节点。
+    find the time point with the maximum error for a single model.
     
     Args:
-        path: prediction.csv 路径
-        is_tl: 是否为 TL 模型（需加偏移量）
+        path: path of prediction.csv
+        is_tl: whether this is a TL model (an offset must be added)
     
     Returns:
         dict: {row_index, time_step, date_str, max_mae}
@@ -224,19 +233,19 @@ def find_model_max_error(path, is_tl=False):
         return None
     
     df = pd.read_csv(path)
-    # ★ 兼容两种列名: _real_X (LSTM/MLP) 和 _true_X (Gene模型)
+    # Supports both column-name styles: _real_X (LSTM/MLP) and _true_X (Gene model)
     real_cols = sorted([c for c in df.columns if 'real' in c.lower() or 'true' in c.lower()])
     pred_cols = sorted([c for c in df.columns if 'pred' in c.lower()])
     mae = np.mean(np.abs(df[pred_cols].values - df[real_cols].values), axis=1)
-    row_idx = int(np.argmax(mae))   # 行索引（关键！）
+    row_idx = int(np.argmax(mae))   # row index (important!)
     val = float(mae[row_idx])
     ts = int(df['time_step'].values[row_idx])
     
-    # TL 模型加偏移量
+    # Add the offset for TL models
     if is_tl:
         ts += 4263
     
-    # 获取日期
+    # Get the dates
     dates = load_dates()
     date_str = ''
     if dates is not None and ts < len(dates):
@@ -250,7 +259,7 @@ def find_model_max_error(path, is_tl=False):
                 date_str = ''
     
     return {
-        'row_index': row_idx,     # 行索引，可直接用于其他模型
+        'row_index': row_idx,     # row index, usable directly for the other models
         'time_step': ts,
         'date_str': date_str,
         'max_mae': val,
@@ -259,13 +268,13 @@ def find_model_max_error(path, is_tl=False):
 
 def add_max_error_textbox(fig, max_info):
     """
-    在图的右上角添加一个 textbox，标注最高误差的月日。
+    add a textbox in the top-right corner of the figure with the month-day of the maximum error.
     """
     if max_info is None:
         return
     
     date_str = max_info['date_str']
-    # 提取月日部分（英文格式避免字体问题）
+    # Take the month-day part (English format avoids font issues)
     month_day = ''
     try:
         dt = pd.to_datetime(date_str)
@@ -275,7 +284,7 @@ def add_max_error_textbox(fig, max_info):
     
     text = f"Max Error Point\n{month_day}\nMAE = {max_info['max_mae']:.4f}"
     
-    # 在 figure 级别添加 textbox
+    # Add a textbox at the figure level
     fig.text(0.97, 0.98, text,
              transform=fig.transFigure,
              fontsize=label_size - 2,
@@ -289,27 +298,27 @@ def add_max_error_textbox(fig, max_info):
 
 def plot_single_model(model_key, model_cfg, output_dir, max_info):
     """
-    为单个模型绘制一张包含全 feature 子图的对比图。
-    ★ 2block: Gene模型使用3区域(ANA_ANO/OX/EFF)，LSTM/MLP使用4区域(ANA/ANO/OX/EFF)
+    draw a comparison figure containing all feature subplots for a single model.
+    2block: the Gene model uses 3 regions (ANA_ANO/OX/EFF), LSTM/MLP use 4 (ANA/ANO/OX/EFF)
     """
     path = model_cfg['path']
     if not os.path.exists(path):
-        print(f"  [跳过] 文件不存在: {path}")
+        print(f"  [skipped] file not found: {path}")
         return None
     
-    # ★ 2block: 根据模型类型选择区域配置
+    # 2block: pick the region configuration based on the model type
     is_gene_model = 'Gene' in model_key
     if is_gene_model:
         FEATURE_GROUPS = FEATURE_GROUPS_MERGED  # ['ANA_ANO', 'OX', 'EFF']
-        # Gene模型: ana_ano有6指标, ox有3指标, eff有3指标 → 共12特征
+        # Gene model: ana_ano has 6 targets, ox 3, eff 3 -> 12 features in total
         REGION_FEAT_INDICES = {
-            'ANA_ANO': [1, 2, 3, 4, 5, 6],  # 6维 (原ANA_1~3 + ANO_1~3)
+            'ANA_ANO': [1, 2, 3, 4, 5, 6],  # 6 dims (originally ANA_1-3 + ANO_1-3)
             'OX': [1, 2, 3],
             'EFF': [1, 2, 3],
         }
-        n_rows = 4  # ANA_ANO(2行) + OX(1行) + EFF(1行)
-        n_cols = 3  # 每行最多3列 (ana_ano需要2行来显示6个指标)
-        n_shades_total = 12  # 总共12个特征
+        n_rows = 4  # ANA_ANO (2 rows) + OX (1 row) + EFF (1 row)
+        n_cols = 3  # at most 3 columns per row (ana_ano needs 2 rows to show its 6 indicators)
+        n_shades_total = 12  # 12 features in total
     else:
         FEATURE_GROUPS = FEATURE_GROUPS_ORIGINAL  # ['ANA', 'ANO', 'OX', 'EFF']
         REGION_FEAT_INDICES = {rg: FEATURE_INDICES_ORIGINAL for rg in FEATURE_GROUPS}
@@ -320,7 +329,7 @@ def plot_single_model(model_key, model_cfg, output_dir, max_info):
     df = pd.read_csv(path)
     time_steps = df['time_step'].values
     
-    # TL 模型的 time_step 从 0 开始重新编号，需加偏移量与 wq.xlsx 索引对齐
+    # TL models renumber time_step from 0, so an offset is needed to align with the wq.xlsx index
     if 'TL' in model_key:
         offset = 4263
         time_steps = time_steps + offset
@@ -328,7 +337,7 @@ def plot_single_model(model_key, model_cfg, output_dir, max_info):
     actual_dates = load_dates()
     dates = generate_dates_for_plot(time_steps, actual_dates)
     
-    # ---- 截取从 PLOT_START_DATE 开始的数据 ----
+    # ---- Cut the series starting from PLOT_START_DATE ----
     start_indices = []
     for i, d in enumerate(dates):
         try:
@@ -347,21 +356,21 @@ def plot_single_model(model_key, model_cfg, output_dir, max_info):
     x_pos = np.arange(len(dates))
     marker_color = model_cfg['marker_color']
     
-    # 生成该模型的配色组
+    # Build the color group of this model
     shades = generate_shades(model_cfg['base_hue'], n_shades=n_shades_total)
     
-    # ★ 2block: 创建图形布局
-    # Gene模型: 4行(ANA_ANO占2行+OX+EFF) × 3列 = 12子图
-    # LSTM/MLP: 4行(ANA+ANO+OX+EFF) × 3列 = 12子图
+    # 2block: create the figure layout
+    # Gene model: 4 rows (ANA_ANO takes 2 rows + OX + EFF) x 3 cols = 12 panels
+    # LSTM/MLP: 4 rows (ANA+ANO+OX+EFF) x 3 cols = 12 panels
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(20, 17))
     
     stats_list = []
     shade_idx = 0
     
-    # ★ 2block: 构建区域→(行,列)位置的映射
+    # 2block: build the region -> (row, col) position mapping
     plot_positions = []  # list of (region, feat_idx, row, col)
     if is_gene_model:
-        # Gene模型: ANA_ANO前3指标→Row0, 后3指标→Row1; OX→Row2; EFF→Row3
+        # Gene model: ANA_ANO feats 1-3 -> Row0, feats 4-6 -> Row1; OX -> Row2; EFF -> Row3
         ana_ano_feats = REGION_FEAT_INDICES['ANA_ANO']  # [1,2,3,4,5,6]
         for i, feat in enumerate(ana_ano_feats[:3]):
             plot_positions.append(('ANA_ANO', feat, 0, i))
@@ -372,34 +381,34 @@ def plot_single_model(model_key, model_cfg, output_dir, max_info):
         for i, feat in enumerate(REGION_FEAT_INDICES['EFF']):
             plot_positions.append(('EFF', feat, 3, i))
     else:
-        # LSTM/MLP: 每个区域1行
+        # LSTM/MLP: one row per region
         for row_idx, region in enumerate(FEATURE_GROUPS):
             for col_idx, feat_idx in enumerate(REGION_FEAT_INDICES[region]):
                 plot_positions.append((region, feat_idx, row_idx, col_idx))
     
-    # ★ 2block: 按位置逐个子图绘制
+    # 2block: draw panels one by one by position
     for region, feat_idx, row_idx, col_idx in plot_positions:
         ax = axes[row_idx, col_idx]
         
-        # ★ 兼容两种列名格式: _real_X (LSTM/MLP & TL Gene) 和 _true_X (非TL Gene)
+        # Supports both column-name styles: _real_X (LSTM/MLP & TL Gene) and _true_X (non-TL Gene)
         if is_gene_model:
-            # Gene模型: ANA_ANO → 映射回原始 ANA/ANO
+            # Gene model: ANA_ANO -> mapped back to the original ANA/ANO
             if region == 'ANA_ANO':
                 if feat_idx <= 3:
                     orig_region = 'ANA'
-                    orig_idx = feat_idx  # 保持1-based索引 (_real_1, _real_2...)
+                    orig_idx = feat_idx  # keep the 1-based index (_real_1, _real_2...)
                 else:
                     orig_region = 'ANO'
-                    orig_idx = feat_idx - 3  # 4→1, 5→2, 6→3 (保持1-based)
+                    orig_idx = feat_idx - 3  # 4->1, 5->2, 6->3 (keeping 1-based)
             else:
                 orig_region = region
-                orig_idx = feat_idx  # 保持1-based索引
+                orig_idx = feat_idx  # keep the 1-based index
             
-            # 先尝试 _real_X 格式 (TL Gene / LSTM / MLF)，再尝试 _true_X 格式 (非TL Gene)
+            # Try the _real_X format first (TL Gene / LSTM / MLP), then the _true_X format (non-TL Gene)
             real_col = f'{orig_region}_real_{orig_idx}'
             pred_col = f'{orig_region}_pred_{orig_idx}'
             if real_col not in df.columns or pred_col not in df.columns:
-                # 回退到 _true_0-based 格式 (非TL Gene模型)
+                # Fall back to the _true_ 0-based format (non-TL Gene model)
                 real_col = f'{orig_region}_true_{orig_idx - 1}'
                 pred_col = f'{orig_region}_pred_{orig_idx - 1}'
         else:
@@ -416,43 +425,43 @@ def plot_single_model(model_key, model_cfg, output_dir, max_info):
         pred_vals = df[pred_col].values
         mae = np.abs(pred_vals - real_vals)
         
-        # ---- 反归一化（Min-Max, raw_min=0）----
+        # ---- De-normalization (Min-Max, raw_min=0) ----
         raw_max = DENORM_MAX.get((region, feat_idx), 1.0)
         real_vals = real_vals * raw_max
         pred_vals = pred_vals * raw_max
         mae = mae * raw_max
         
-        # 当前子图的配色（深浅变化）
+        # Color palette of the current panel (varying shade)
         real_color, pred_color = shades[shade_idx]
         shade_idx += 1
         
-        # ---- 绘制真实值 ----
+        # ---- Plot the ground truth ----
         ax.plot(x_pos, real_vals, color=real_color, linewidth=1.3,
                 alpha=0.4, label='Observed', zorder=3)
         
-        # ---- 绘制预测值 ----
+        # ---- Plot the predicted values ----
         ax.plot(x_pos, pred_vals, color=pred_color, linewidth=1.3,
                 alpha=0.85, linestyle='--', label='Predicted', zorder=3)
         
-        # ---- 标注最高误差时间节点 ----
-        # 直接使用普通模型的行索引（row_index），不通过 time_step 查找
+        # ---- Annotate the time point with the largest error ----
+        # Use the row index (row_index) of the plain model directly instead of looking up time_step
         target_row_idx = max_info['row_index'] if max_info else None
         if target_row_idx is not None and target_row_idx < len(real_vals):
             tgt_idx = target_row_idx
             tgt_real = real_vals[tgt_idx]
             tgt_pred = pred_vals[tgt_idx]
             
-            # 垂直虚线
+            # Vertical dashed line
             ax.axvline(x=tgt_idx, color=marker_color,
                        linestyle=':', linewidth=1.5, alpha=0.75, zorder=4)
-            # 散点标记
+            # Scatter markers
             ax.scatter([tgt_idx], [tgt_real], color=real_color,
                        s=50, zorder=5, edgecolors='white', linewidths=0.8)
             ax.scatter([tgt_idx], [tgt_pred], color=pred_color,
                        s=50, zorder=5, edgecolors='white', linewidths=0.8,
                        marker='s')
             
-            # 日期 textbox 放在红色竖线上方
+            # Place the date textbox above the red vertical line
             date_display = ''
             try:
                 dt = pd.to_datetime(max_info['date_str'])
@@ -474,30 +483,30 @@ def plot_single_model(model_key, model_cfg, output_dir, max_info):
                     color='black', fontweight='bold',
                     zorder=10)
         
-        # ---- 坐标轴设置（无 title）----
+        # ---- Axis setup (no title) ----
         ax.grid(True, alpha=0.15)
         
-        # Y 轴标签：用 feature 名字
-        # ★ 2block: Gene模型 ANA_ANO 的 feat 4~6 对应原 ANO 区域指标
+        # Y axis label: use the feature name
+        # 2block: in the Gene model, ANA_ANO feats 4-6 correspond to the original ANO targets
         if region == 'EFF' and feat_idx == 1:
             ylabel = EFF_FEAT1_NAME
         elif is_gene_model and region == 'ANA_ANO':
-            # feat 1~3 → 原ANA指标, feat 4~6 → 原ANO指标
+            # feats 1-3 -> original ANA targets, feats 4-6 -> original ANO targets
             if feat_idx <= 3:
                 ylabel = FEAT_DISPLAY_NAMES.get(feat_idx, f'Feat_{feat_idx}')
             else:
-                # 映射回原始ANO的1~3
+                # Map back to the original ANO targets 1-3
                 orig_feat = feat_idx - 3
                 ylabel = FEAT_DISPLAY_NAMES.get(orig_feat, f'Feat_{orig_feat}')
         else:
             ylabel = FEAT_DISPLAY_NAMES.get(feat_idx, f'Feat_{feat_idx}')
         ax.set_ylabel(ylabel, fontsize=tick_size + 1)
         
-        # 只在最底行显示 X 轴标签
+        # Show the X axis labels only in the bottom row
         if row_idx == n_rows - 1:
             ax.set_xlabel('Date', fontsize=tick_size + 1)
         
-        # X 轴刻度
+        # X axis ticks
         n_pts = len(dates)
         n_ticks = min(5, max(4, n_pts))
         tick_positions = [int(i * (n_pts - 1) / (n_ticks - 1))
@@ -507,11 +516,11 @@ def plot_single_model(model_key, model_cfg, output_dir, max_info):
         ax.set_xticklabels(tick_labels, fontsize=tick_size - 1)
         ax.tick_params(axis='y', labelsize=tick_size - 1)
         
-        # 每个子图都有 legend（右上角）
+        # Every panel has a legend (top-right)
         ax.legend(loc='upper right', fontsize=legend_size,
                   framealpha=0.88, edgecolor='gray')
         
-        # 统计信息（仅保存 CSV，不在图中显示）
+        # Statistics (saved to CSV only, not shown in the figure)
         feat_mae_mean = np.mean(mae)
         ss_res = np.sum((real_vals - pred_vals) ** 2)
         ss_tot = np.sum((real_vals - np.mean(real_vals)) ** 2)
@@ -523,22 +532,22 @@ def plot_single_model(model_key, model_cfg, output_dir, max_info):
             'R2': feat_r2,
         })
     
-    # 区域行标签（左侧旋转文字）
-    # ★ 2block: Gene模型 ANA_ANO 跨两行(Row0,1)，只在Row0标注
+    # Region row labels (rotated text on the left)
+    # 2block: the Gene model ANA_ANO spans two rows (Row0, Row1); annotate only on Row0
     if is_gene_model:
-        # Row 0: ANA_ANO 标签
+        # Row 0: ANA_ANO labels
         axes[0, 0].annotate(REGION_DISPLAY_NAMES.get('ANA_ANO', 'ANA_ANO'),
                               xy=(-0.24, 0.5),
                               xycoords=axes[0, 0].transAxes,
                               fontsize=label_size, fontweight='bold',
                               ha='right', va='center', rotation=90)
-        # Row 2: OX 标签
+        # Row 2: OX labels
         axes[2, 0].annotate(REGION_DISPLAY_NAMES.get('OX', 'OX'),
                               xy=(-0.24, 0.5),
                               xycoords=axes[2, 0].transAxes,
                               fontsize=label_size, fontweight='bold',
                               ha='right', va='center', rotation=90)
-        # Row 3: EFF 标签
+        # Row 3: EFF labels
         axes[3, 0].annotate(REGION_DISPLAY_NAMES.get('EFF', 'EFF'),
                               xy=(-0.24, 0.5),
                               xycoords=axes[3, 0].transAxes,
@@ -552,7 +561,7 @@ def plot_single_model(model_key, model_cfg, output_dir, max_info):
                                       fontsize=label_size, fontweight='bold',
                                       ha='right', va='center', rotation=90)
     
-    # 横向中轴线 title（放在图上方中间位置，靠近图）
+    # Title of the horizontal center line (placed above the panel, close to it)
     fig.text(0.5, 0.995, model_cfg['title'],
              transform=fig.transFigure,
              fontsize=label_size + 4, fontweight='bold',
@@ -560,19 +569,19 @@ def plot_single_model(model_key, model_cfg, output_dir, max_info):
     
     plt.tight_layout(rect=[0.16, 0, 0.98, 0.97])
     
-    # 保存图片
+    # Save the figure
     safe_name = model_key.replace('_', '-')
     output_path = os.path.join(output_dir, f'{safe_name}_all_features.png')
     plt.savefig(output_path, dpi=250, bbox_inches='tight')
     plt.close()
     
-    # 保存统计 CSV
+    # Save the statistics CSV
     stats_df = pd.DataFrame(stats_list)
     stats_csv = os.path.join(output_dir, f'{safe_name}_feature_stats.csv')
     stats_df.to_csv(stats_csv, index=False)
     
-    print(f"  已保存: {output_path}")
-    print(f"  统计表: {stats_csv}")
+    print(f"  Saved: {output_path}")
+    print(f"  Statistics table: {stats_csv}")
     
     return stats_df
 
@@ -582,17 +591,17 @@ MAX_ERROR_TIME_STEP_FALLBACK = 6146
 
 def main():
     print("=" * 60)
-    print("绘制各模型全 Feature 对比图")
-    print(f"起始日期: {PLOT_START_DATE.strftime('%Y-%m-%d')}")
-    print("输出目录: results/preVStrue/")
+    print("Plot the all-feature comparison for each model")
+    print(f"Start date: {PLOT_START_DATE.strftime('%Y-%m-%d')}")
+    print("Output directory: results/preVStrue/")
     print("=" * 60)
     
     output_dir = os.path.join('results', 'preVStrue')
     os.makedirs(output_dir, exist_ok=True)
-    print(f"\n输出目录已创建: {output_dir}")
+    print(f"\nOutput directory created: {output_dir}")
     
-    # 使用普通(Train)模型的最高误差行索引，统一应用到所有LL模型
-    print("\n正在查找普通模型的最高误差位置...")
+    # Use the row index of the highest error of the plain (Train) model for all TL models
+    print("\nLooking for the maximum-error position of the plain model...")
     
     train_paths = {
         'Gene': 'step1_gene_model_trans_2block/results/gene_model/prediction.csv',
@@ -610,11 +619,11 @@ def main():
             unified_max_info = info
     
     if unified_max_info:
-        print(f"  统一最高误差点: row_index={unified_max_info['row_index']}, "
-              f"日期={unified_max_info['date_str']}, "
+        print(f"  Unified maximum-error point: row_index={unified_max_info['row_index']}, "
+              f"date={unified_max_info['date_str']}, "
               f"MAE={unified_max_info['max_mae']:.6f}")
     else:
-        print("  警告: 未能找到最高误差位置")
+        print("  Warning: could not locate the maximum-error position")
         unified_max_info = None
     print()
     
@@ -627,9 +636,9 @@ def main():
             all_stats[model_key] = stats_df
         print()
     
-    # 汇总统计
+    # Summary statistics
     print("=" * 60)
-    print("汇总统计")
+    print("Summary statistics")
     print("=" * 60)
     
     summary_rows = []
@@ -647,14 +656,14 @@ def main():
         summary_df = pd.DataFrame(summary_rows)
         summary_path = os.path.join(output_dir, 'all_models_feature_summary.csv')
         summary_df.to_csv(summary_path, index=False)
-        print(f"汇总统计已保存: {summary_path}")
+        print(f"Summary statistics saved: {summary_path}")
         
-        print("\n各模型平均 MAE（跨所有 feature）:")
+        print("\nMean MAE of each model (across all features):")
         model_avg = summary_df.groupby('Model')['MAE_mean'].mean().sort_values()
         for m, v in model_avg.items():
             print(f"  {m}: {v:.6f}")
     
-    print("\n完成！")
+    print("\nDone!")
 
 
 if __name__ == '__main__':

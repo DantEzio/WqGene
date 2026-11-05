@@ -7,7 +7,7 @@ import os
 class MLPModel(nn.Module):
     def __init__(self, hidden_dim=256, dropout_rate=0.3):
         super().__init__()
-        # 输入维度定义
+        # Input dimension definition
         self.wq_inf_dim = 7  # F-INF, T-INF, pH-INF, COD-INF, C/N-INF, TN-INF, AN-INF
         self.wq_ana_dim = 3  # DO-ANA, AN-ANA, NN-ANA
         self.wq_ano_dim = 3  # DO-ANO, AN-ANO, NN-ANO
@@ -17,7 +17,7 @@ class MLPModel(nn.Module):
         self.hidden_dim = hidden_dim
         self.dropout_rate = dropout_rate
         
-        # 输入投影层（保持时间维度）
+        # Input projection layer (keeps the time dimension)
         self.inf_proj = nn.Sequential(
             nn.Linear(self.wq_inf_dim, self.hidden_dim),
             nn.ReLU(),
@@ -63,12 +63,12 @@ class MLPModel(nn.Module):
             nn.Dropout(dropout_rate)
         )
         
-        # MLP framework（替代 LSTM）
-        # 计算输入维度：时间序列维度 * 投影维度
-        self.timestep_dim = 40  # 窗口大小
+        # MLP framework (replaces LSTM)
+        # Compute the input dimension: timestep dimension * projection dimension
+        self.timestep_dim = 40  # window size
         self.concat_dim = self.wq_inf_dim + self.wq_ana_dim + self.wq_ano_dim + self.wq_ox_dim + self.wq_eff_dim
         
-        # MLP 层
+        # MLP layers
         self.mlp = nn.Sequential(
             nn.Linear(self.concat_dim * self.timestep_dim, self.hidden_dim * 2),
             nn.ReLU(),
@@ -81,24 +81,24 @@ class MLPModel(nn.Module):
             nn.Dropout(dropout_rate)
         )
         
-        # 输出层
+        # Output layer
         self.output_ana = nn.Linear(self.hidden_dim, 3)  # DO-ANA, AN-ANA, NN-ANA
         self.output_ano = nn.Linear(self.hidden_dim, 3)  # DO-ANO, AN-ANO, NN-ANO
         self.output_ox = nn.Linear(self.hidden_dim, 3)   # DO-OX, AN-OX, NN-OX
         self.output_eff = nn.Linear(self.hidden_dim, 3)  # COD-EFF, TN-EFF, AN-EFF
     
     def forward(self, wq_inf, wq_ana, wq_ano, wq_ox, wq_eff):
-        # 输入形状: (batch, timestep, dim)
+        # Input shape: (batch, timestep, dim)
         batch_size, timestep, _ = wq_inf.shape
         
-        # 输入投影（对每个时间步应用相同的投影）
+        # Input projection (the same projection is applied at every time step)
         inf_proj = wq_inf  # (batch, timestep, wq_inf_dim)
         ana_proj = wq_ana  # (batch, timestep, wq_ana_dim)
         ano_proj = wq_ano  # (batch, timestep, wq_ano_dim)
         ox_proj = wq_ox    # (batch, timestep, wq_ox_dim)
         eff_proj = wq_eff  # (batch, timestep, wq_eff_dim)
         
-        # 拼接成大变量
+        # Concatenate into the big input tensor
         concat_features = torch.cat([
             inf_proj,             # wq_inf_dim
             ana_proj,             # wq_ana_dim
@@ -107,13 +107,13 @@ class MLPModel(nn.Module):
             eff_proj              # wq_eff_dim
         ], dim=-1)  # (batch, timestep, concat_dim)
         
-        # 展平时间序列维度
+        # Flatten the time dimension
         flattened = concat_features.reshape(batch_size, -1)  # (batch, timestep * concat_dim)
         
-        # 送入 MLP
+        # Feed into the MLP
         mlp_out = self.mlp(flattened)  # (batch, hidden_dim)
         
-        # 输出预测
+        # Output the predictions
         output_ana = self.output_ana(mlp_out)
         output_ano = self.output_ano(mlp_out)
         output_ox = self.output_ox(mlp_out)
@@ -147,7 +147,7 @@ class WaterQualityDataset(torch.utils.data.Dataset):
         self.labels_dict = labels_dict
         self.window_size = window_size
         
-        # 输入变量定义
+        # Input variable definition
         self.inf_vars = ['F-INF_MA_smooth', 'T-INF_MA_smooth', 'pH-INF_MA_smooth', 
                         'COD-INF_MA_smooth', 'C/N-INF_MA_smooth', 'TN-INF_MA_smooth', 'AN-INF_MA_smooth']
         self.ana_vars = ['DO-ANA_MA_smooth', 'AN-ANA_MA_smooth', 'NN-ANA_MA_smooth']
@@ -159,30 +159,30 @@ class WaterQualityDataset(torch.utils.data.Dataset):
         return len(self.wq_data) - self.window_size
     
     def __getitem__(self, idx):
-        # 获取前40个时间步的数据
+        # Take the first 40 time steps
         window_end = idx + self.window_size
         
-        # 获取INF数据（保持时间序列维度）
+        # Fetch the INF data (keeping the time dimension)
         inf_data = self.wq_data[self.inf_vars].iloc[idx:window_end]
         inf_feat = torch.tensor(inf_data.values, dtype=torch.float32)  # (window_size, 7)
         
-        # 获取ANA数据
+        # Fetch the ANA data
         ana_data = self.wq_data[self.ana_vars].iloc[idx:window_end]
         ana_feat = torch.tensor(ana_data.values, dtype=torch.float32)  # (window_size, 3)
         
-        # 获取ANO数据
+        # Fetch the ANO data
         ano_data = self.wq_data[self.ano_vars].iloc[idx:window_end]
         ano_feat = torch.tensor(ano_data.values, dtype=torch.float32)  # (window_size, 3)
         
-        # 获取OX数据
+        # Fetch the OX data
         ox_data = self.wq_data[self.ox_vars].iloc[idx:window_end]
         ox_feat = torch.tensor(ox_data.values, dtype=torch.float32)  # (window_size, 3)
         
-        # 获取EFF数据
+        # Fetch the EFF data
         eff_data = self.wq_data[self.eff_vars].iloc[idx:window_end]
         eff_feat = torch.tensor(eff_data.values, dtype=torch.float32)  # (window_size, 3)
         
-        # 获取下一时刻的标签
+        # Get the labels of the next time step
         labels = {
             "ANA": torch.tensor(self.labels_dict["ANA"][window_end], dtype=torch.float32),
             "ANO": torch.tensor(self.labels_dict["ANO"][window_end], dtype=torch.float32),
@@ -193,16 +193,16 @@ class WaterQualityDataset(torch.utils.data.Dataset):
         return inf_feat, ana_feat, ano_feat, ox_feat, eff_feat, labels
 
 def prepare_data():
-    # 获取当前脚本所在目录
+    # Get the directory of this script
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    # 构建数据文件的绝对路径
+    # Build the absolute path of the data file
     wq_path = os.path.join(current_dir, '../data_WQ/wq_scaled.csv')
     
     print(f"Loading data from:")
     print(f"  - Water quality data: {wq_path}")
     
     try:
-        # 读取水质数据
+        # Read the water quality data
         wq_data = pd.read_csv(wq_path)
     except Exception as e:
         print(f"Error loading data: {e}")
@@ -210,7 +210,7 @@ def prepare_data():
     
     print(f"Total samples: {len(wq_data)}")
     
-    # 准备标签数据
+    # Prepare the label data
     labels_dict = {
         "ANA": wq_data[['DO-ANA_MA_smooth', 'AN-ANA_MA_smooth', 'NN-ANA_MA_smooth']].values,
         "ANO": wq_data[['DO-ANO_MA_smooth', 'AN-ANO_MA_smooth', 'NN-ANO_MA_smooth']].values,

@@ -1,12 +1,23 @@
 """
-迁移学习 Gene Model SHAP + PDP 敏感性分析热力图可视化
+results5_trans_SHAPPDP_heatmap.py - heatmap of SHAP / PDP sensitivity across transfer steps
 =========================================================
-将 results/Shapely for trans/ 和 results/PDP for trans/ 下各时间步的结果汇总为热力图，
-展示 21 个 n gene 的 SHAP/PDP 值随迁移学习过程的演变趋势。
-- 3 行 2 列子图：左列 SHAP / 右列 PDP (ana_ano / ox) + 第3行余弦相似度曲线（★ 2block: ANA+ANO合并）
-- 横坐标：WQ 实际时间（从 wq.xlsx 获取）
-- 纵坐标：KEGG KO 基因名（从 gene_ref/Gene_info.xlsx 获取）
-- 颜色：SHAP 用蓝色系（Blues），PDP 用橙色系（Oranges）
+Purpose:
+    aggregate the per-step (checkpoint) results under results/Shapely for trans/ and results/PDP for trans/
+    aggregate the gene sensitivity results into a matrix and show the SHAP / PDP values of the 21 n genes as a heatmap
+    the evolution trend along the transfer learning process, plus a consistency measure between the two indicators.
+- 3 rows x 2 cols: left column SHAP / right column PDP (ana_ano / ox)
+  Row 3 is the SHAP vs PDP cosine similarity curve (2block scheme: ANA+ANO merged)
+- x axis: actual WQ timestamps (from data_WQ/wq.xlsx)
+- y axis: KEGG KO gene names (from gene_ref/Gene_info.xlsx)
+- Colors: SHAP in blues (Blues), PDP in oranges (Oranges)
+Input:
+    results/Shapely for trans/step_{N}/SHAP_feature_importance_{zone}.csv
+    results/PDP for trans/step_{N}/PDP_feature_importance_{zone}.csv
+    data_WQ/wq.xlsx, gene_ref/Gene_info.xlsx, data_GeneM/n_gene_dynamic.xlsx
+Output:
+    results/shap_pdp_trans_heatmap_raw.png
+Usage:
+    python results5_trans_SHAPPDP_heatmap.py      # run from the project root
 """
 
 import os
@@ -18,7 +29,7 @@ from matplotlib.colors import Normalize
 from datetime import datetime
 
 # ============================================================
-# 路径配置
+# Path configuration
 # ============================================================
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = SCRIPT_DIR
@@ -27,28 +38,28 @@ PDP_BASE_DIR = os.path.join(ROOT_DIR, "results", "PDP for trans")
 WQ_RAW_PATH = os.path.join(ROOT_DIR, "data_WQ", "wq.xlsx")
 GENE_INFO_PATH = os.path.join(ROOT_DIR, "gene_ref", "Gene_info.xlsx")
 
-# Step → WQ 行号的偏移量：dataset window_size = 40,
-# 模型保存用 i+1 (= window_end), 所以 step_N 对应 wq.iloc[N + 39]
+# Step -> WQ row offset: dataset window_size = 40,
+# Models are saved with i+1 (= window_end), so step_N maps to wq.iloc[N+39]
 WINDOW_SIZE = 40
 
 # ============================================================
-# 归一化开关：True = 每个时刻列归一化, False = 使用原始值
+# Normalization switch: True = normalize each time-step column, False = use the raw values
 # ============================================================
 USE_NORMALIZE = False
 
-# 输出文件名根据 USE_NORMALIZE 自动区分
+# The output filename is chosen automatically from USE_NORMALIZE
 _OUTPUT_SUFFIX = "_normalized" if USE_NORMALIZE else "_raw"
 OUTPUT_PATH = os.path.join(ROOT_DIR, "results", f"shap_pdp_trans_heatmap{_OUTPUT_SUFFIX}.png")
 
 
 def load_wq_time_series(wq_path):
-    """从 wq.xlsx 读取 time 列，返回 pandas Series"""
+    """Read the time column from wq.xlsx and return a pandas Series"""
     print(f"Loading WQ time data from: {wq_path}")
     df = pd.read_excel(wq_path)
     if 'time' in df.columns:
         time_col = df['time']
     else:
-        # 兜底：取第一列
+        # Fallback: take the first column
         time_col = df.iloc[:, 0]
     print(f"  Loaded {len(time_col)} time records")
     return time_col
@@ -56,25 +67,25 @@ def load_wq_time_series(wq_path):
 
 def load_gene_name_mapping(gene_info_path):
     """
-    从 Gene_info.xlsx 读取基因编号→名字的映射关系。
-    返回 dict: {KO编号: 显示名称}
+    read the gene ID -> name mapping from Gene_info.xlsx.
+    returns dict: {KO id: display name}
     """
     print(f"Loading gene info from: {gene_info_path}")
     df = pd.read_excel(gene_info_path)
     
-    # Gene_info.xlsx 列: KO, L1, L2, Pathway, Description
-    # 使用 Description 列作为显示名称，如果没有则使用 KO 编号
+    # Gene_info.xlsx columns: KO, L1, L2, Pathway, Description
+    # Use the Description column as the display name, falling back to the KO id
     gene_id_to_name = {}
     for _, row in df.iterrows():
         ko_id = row['KO']
-        # Description 格式如: "K00844  HK; hexokinase [EC:2.7.1.1]"
-        # 提取简短名称（取第一个分号前的部分或直接用 Description）
+        # Description format, e.g. "K00844  HK; hexokinase [EC:2.7.1.1]"
+        # Take the short name (the part before the first semicolon, or the Description itself)
         desc = str(row.get('Description', ''))
         if desc and desc.strip():
-            # 尝试提取有意义的名字部分
-            # 通常格式: "K0xxxx  Name; description [EC:x.x.x.x]"
+            # Try to extract a meaningful name part
+            # Typical format: "K0xxxx  Name; description [EC:x.x.x.x]"
             name_part = desc.split(';')[0] if ';' in desc else desc
-            # 去掉开头的 KO 编号重复
+            # Strip the repeated KO id at the start
             name_part = name_part.strip()
             if name_part.startswith(ko_id):
                 name_part = name_part[len(ko_id):].strip()
@@ -88,9 +99,9 @@ def load_gene_name_mapping(gene_info_path):
 
 def discover_result_dirs(base_dir, prefix="SHAP"):
     """
-    扫描结果目录，返回 [(step_num, dir_path)] 按编号升序排列
-    文件夹名格式: step_XXXXX
-    prefix: 用于区分 SHAP 或 PDP 文件
+    scan the result directory and return [(step_num, dir_path)] sorted ascending by number
+    Folder name format: step_XXXXX
+    prefix: distinguishes SHAP from PDP files
     """
     print(f"Scanning {prefix} result directory: {base_dir}")
     entries = []
@@ -107,7 +118,7 @@ def discover_result_dirs(base_dir, prefix="SHAP"):
         if match:
             step_num = int(match.group(1))
             full_path = os.path.join(base_dir, name)
-            # 确认文件夹存在且含对应 CSV
+            # Make sure the folder exists and contains the matching CSV
             if os.path.isdir(full_path) and any(
                 f.startswith(file_prefix) and f.endswith(".csv")
                 for f in os.listdir(full_path)
@@ -122,10 +133,10 @@ def discover_result_dirs(base_dir, prefix="SHAP"):
 
 def get_fixed_gene_order(first_shap_dir):
     """
-    从第一个 SHAP 结果中提取固定的基因顺序（KO 编号列表），
-    用于后续所有时间步的矩阵对齐。
+    extract the fixed gene order (KO id list) from the first SHAP result,
+    used to align the matrices of all later time steps.
     """
-    csv_path = os.path.join(first_shap_dir, "SHAP_feature_importance_ana_ano.csv")  # ★ 2block
+    csv_path = os.path.join(first_shap_dir, "SHAP_feature_importance_ana_ano.csv")  # 2block
     df = pd.read_csv(csv_path)
     gene_list = df['gene'].tolist()
     print(f"  Fixed gene order ({len(gene_list)} genes): {gene_list}")
@@ -134,24 +145,24 @@ def get_fixed_gene_order(first_shap_dir):
 
 def load_and_build_matrix(result_dirs, model_type, fixed_genes, value_column, prefix="SHAP"):
     """
-    构建指定反应器类型的 [n_genes × n_steps] 矩阵。
+    build the [n_genes x n_steps] matrix of a given reactor type.
 
     Args:
-        result_dirs: discover_result_dirs() 返回的 [(step_num, path)] 列表
+        result_dirs: the [(step_num, path)] list returned by discover_result_dirs()
         model_type: 'ana' | 'ano' | 'ox'
-        fixed_genes: 固定的基因名列表（顺序一致）
-        value_column: CSV 中要读取的值列名 (mean_abs_SHAP 或 mean_PDP)
-        prefix: "SHAP" 或 "PDP"
+        fixed_genes: fixed list of gene names (identical order)
+        value_column: name of the value column to read from the CSV (mean_abs_SHAP or mean_PDP)
+        prefix: "SHAP" or "PDP"
 
     Returns:
-        np.ndarray: shape (n_genes, n_steps)，以及对应的 step_nums 列表
+        np.ndarray: shape (n_genes, n_steps), plus the corresponding step_nums list
     """
     n_genes = len(fixed_genes)
     n_steps = len(result_dirs)
     matrix = np.zeros((n_genes, n_steps))
     step_nums = []
 
-    # 构建 gene → row_index 的映射
+    # Build the gene -> row_index mapping
     gene_to_idx = {g: i for i, g in enumerate(fixed_genes)}
 
     for col_idx, (step_num, dir_path) in enumerate(result_dirs):
@@ -163,7 +174,7 @@ def load_and_build_matrix(result_dirs, model_type, fixed_genes, value_column, pr
             continue
 
         df = pd.read_csv(csv_path)
-        # 用 gene 名映射到固定行索引（CSV 内部顺序可能不同）
+        # Map gene names to fixed row indices (the CSV order may differ)
         for _, row in df.iterrows():
             gene = row['gene']
             val = row.get(value_column, row.iloc[1])
@@ -178,15 +189,15 @@ def load_and_build_matrix(result_dirs, model_type, fixed_genes, value_column, pr
 
 def normalize_per_step(matrices_dict):
     """
-    对每个时刻（每列）的值进行 min-max 归一化到 [0, 1]。
-    归一化按列独立进行，使每个时刻内部各基因的相对重要性可比。
+    min-max normalize the values of each time step (each column) to [0, 1].
+    normalization is done per column so relative gene importance is comparable within each time step.
 
     Args:
         matrices_dict: {'ana': ndarray, 'ano': ndarray, 'ox': ndarray}
-                        每个 shape=(n_genes, n_steps)
+                        each with shape=(n_genes, n_steps)
 
     Returns:
-        dict: 归一化后的矩阵，结构同输入
+        dict: normalized matrix with the same structure as the input
     """
     normalized = {}
     for mtype, mat in matrices_dict.items():
@@ -199,7 +210,7 @@ def normalize_per_step(matrices_dict):
             if col_max - col_min > 1e-12:
                 norm_mat[:, col] = (col_data - col_min) / (col_max - col_min)
             else:
-                norm_mat[:, col] = 0.0  # 全列值相同则置0
+                norm_mat[:, col] = 0.0  # set to 0 when the whole column is constant
         normalized[mtype] = norm_mat
         print(f"  Normalized per-step for '{mtype}'")
     return normalized
@@ -207,14 +218,14 @@ def normalize_per_step(matrices_dict):
 
 def compute_cosine_similarity(vec_a, vec_b):
     """
-    计算两个向量的余弦相似度。
+    compute the cosine similarity of two vectors.
 
     Args:
-        vec_a: np.ndarray, 向量A
-        vec_b: np.ndarray, 向量B（与vec_a等长）
+        vec_a: np.ndarray, vector A
+        vec_b: np.ndarray, vector B (same length as vec_a)
 
     Returns:
-        float: 余弦相似度，范围 [-1, 1]
+        float: cosine similarity in the range [-1, 1]
     """
     dot_product = np.dot(vec_a, vec_b)
     norm_a = np.linalg.norm(vec_a)
@@ -227,17 +238,17 @@ def compute_cosine_similarity(vec_a, vec_b):
 def plot_shap_pdp_heatmap(shap_matrices, pdp_matrices, time_labels, gene_display_names,
                           output_path, use_normalize=False):
     """
-    绘制 4×2 热力图（左列 SHAP Blues / 右列 PDP Oranges）+ 第4行余弦相似度曲线并保存。
+    draw a 4x2 heatmap (left column SHAP Blues / right column PDP Oranges) plus the row-4 cosine similarity curve, then save.
 
     Args:
-        shap_matrices: {'ana': ndarray, 'ano': ndarray, 'ox': ndarray} SHAP数据
-        pdp_matrices: {'ana': ndarray, 'ano': ndarray, 'ox': ndarray} PDP数据
-        time_labels: list of datetime/str, 每个步骤对应的时间标签
-        gene_display_names: list of str, 基因显示名称（从 Gene_info 获取）
-        output_path: 输出图片路径
-        use_normalize: bool, 是否使用了列归一化（影响色阶和标签）
+        shap_matrices: {'ana': ndarray, 'ano': ndarray, 'ox': ndarray} SHAP data
+        pdp_matrices: {'ana': ndarray, 'ano': ndarray, 'ox': ndarray} PDP data
+        time_labels: list of datetime/str, the time label of each step
+        gene_display_names: list of str, gene display names (from Gene_info)
+        output_path: path of the output figure
+        use_normalize: bool, whether column normalization was applied (affects the color scale and labels)
     """
-    # ★ 2block: ANA+ANO合并
+    # 2block: ANA+ANO merged
     types = ['ana_ano', 'ox']
     type_labels = {
         'ana_ano': 'Anaerobic & Anoxic zone gene',
@@ -247,29 +258,29 @@ def plot_shap_pdp_heatmap(shap_matrices, pdp_matrices, time_labels, gene_display
     n_genes = len(gene_display_names)
     n_steps = len(time_labels)
 
-    # ---- 图幅设置 ----
+    # ---- Figure size setup ----
     width_per_step = 0.06 if n_steps > 150 else (0.08 if n_steps > 80 else 0.10)
-    max_fig_width = 32  # 最大宽度限制（两列）
+    max_fig_width = 32  # maximum width limit (two columns)
     fig_width = min(max(16, n_steps * width_per_step * 2), max_fig_width)
     
-    # ---- 创建 Figure 和 GridSpec ----
+    # ---- Create the Figure and GridSpec ----
     fig = plt.figure(
-        figsize=(fig_width, n_genes * 0.55 + 10),  # 放大整体图幅
+        figsize=(fig_width, n_genes * 0.55 + 10),  # enlarge the overall figure
         constrained_layout=False
     )
     
-    # 定义 GridSpec: 3行(2行热力图+1行曲线) × 2列（★ 2block: 从4行改为3行）
+    # Define the GridSpec: 3 rows (2 heatmap rows + 1 curve row) x 2 cols (2block: 4 rows became 3)
     gs = fig.add_gridspec(
         n_types + 1, 2,
-        height_ratios=[1, 1, 1.0],  # 第3行高度增加（余弦相似度）
+        height_ratios=[1, 1, 1.0],  # row 3 is taller (cosine similarity)
         hspace=0.45,
         wspace=0.08
     )
     
-    # 存储所有 axes 用于后续统一设置 xtick
+    # Store all axes so the xticks can be set uniformly later
     all_axes = []
 
-    # ---- 色阶设置 ----
+    # ---- Color scale setup ----
     if use_normalize:
         shap_vmin, shap_vmax = 0.0, 1.0
         pdp_vmin, pdp_vmax = 0.0, 1.0
@@ -289,7 +300,7 @@ def plot_shap_pdp_heatmap(shap_matrices, pdp_matrices, time_labels, gene_display
     pdp_norm = Normalize(vmin=pdp_vmin, vmax=pdp_vmax)
 
     for idx, t in enumerate(types):
-        # ===== 左边: SHAP 热力图 =====
+        # ===== Left: SHAP heatmap =====
         ax_shap = fig.add_subplot(gs[idx, 0])
         all_axes.append(ax_shap)
         
@@ -303,28 +314,28 @@ def plot_shap_pdp_heatmap(shap_matrices, pdp_matrices, time_labels, gene_display
             origin='upper'
         )
 
-        # Y轴：基因显示名称（只在左列显示）
+        # Y axis: gene display names (shown only in the left column)
         ax_shap.set_yticks(range(n_genes))
         ax_shap.set_yticklabels(gene_display_names, fontsize=13)
 
-        # 标题
+        # Title
         ax_shap.set_title(f"{type_labels[t]} - SHAP values",
                          fontsize=22, fontweight='bold', pad=10)
 
-        # Colorbar（★ 紧贴热力图）
+        # Colorbar (placed tight against the heatmap)
         cbar_shap = plt.colorbar(im_shap, ax=ax_shap, fraction=0.03, pad=0.00)
         cbar_shap.ax.tick_params(labelsize=18)
 
         ax_shap.grid(False)
         
-        # 在第一行左上角外侧添加标签 (a)
+        # Add label (a) outside the top-left corner of row 1
         if idx == 0:
             pos = ax_shap.get_position()
-            fig.text(pos.x0 + 0.02, pos.y1 + 0.06, '(a)',  # ★ 右移贴近图
+            fig.text(pos.x0 + 0.02, pos.y1 + 0.06, '(a)',  # moved right, closer to the figure
                     transform=fig.transFigure,
                     fontsize=22, fontweight='bold', va='bottom', ha='left')
 
-        # ===== 右边: PDP 热力图 =====
+        # ===== Right: PDP heatmap =====
         ax_pdp = fig.add_subplot(gs[idx, 1])
         all_axes.append(ax_pdp)
         
@@ -338,29 +349,29 @@ def plot_shap_pdp_heatmap(shap_matrices, pdp_matrices, time_labels, gene_display
             origin='upper'
         )
 
-        # Y轴：与左边相同的基因顺序（不重复显示标签以节省空间）
+        # Y axis: same gene order as the left column (labels suppressed to save space)
         ax_pdp.set_yticks(range(n_genes))
-        ax_pdp.set_yticklabels([''] * n_genes)  # 隐藏右侧 y 轴标签
+        ax_pdp.set_yticklabels([''] * n_genes)  # hide the y tick labels on the right
 
-        # 标题
+        # Title
         ax_pdp.set_title(f"{type_labels[t]} - PDP values",
                          fontsize=22, fontweight='bold', pad=10)
 
-        # Colorbar（★ 紧贴热力图）
+        # Colorbar (placed tight against the heatmap)
         cbar_pdp = plt.colorbar(im_pdp, ax=ax_pdp, fraction=0.03, pad=0.00)
         cbar_pdp.ax.tick_params(labelsize=18)
 
         ax_pdp.grid(False)
         
-        # 在第一行右列左上角外侧添加标签 (b)
+        # Add label (b) outside the top-left corner of the right panel in row 1
         if idx == 0:
             pos = ax_pdp.get_position()
-            fig.text(pos.x0 + 0.02, pos.y1 + 0.06, '(b)',  # ★ 右移贴近图
+            fig.text(pos.x0 + 0.02, pos.y1 + 0.06, '(b)',  # moved right, closer to the figure
                     transform=fig.transFigure,
                     fontsize=22, fontweight='bold', va='bottom', ha='left')
 
-    # ===== 第4行：SHAP vs PDP 余弦相似度曲线（跨列合并） =====
-    # 曲线样式配置：颜色 + 线型 + 标记（★ 2block: 从3条改为2条）
+    # ===== Row 4: SHAP vs PDP cosine similarity curve (spans both columns) =====
+    # Curve styling: color + line style + marker (2block: 3 curves became 2)
     line_styles = {
         'ana_ano': {'color': '#1f77b4', 'linestyle': '-',  'marker': 'o',  'markersize': 6, 'linewidth': 2.8, 'label': 'Anaerobic & Anoxic', 'markevery': max(1, n_steps // 15)},
         'ox':       {'color': '#2ca02c', 'linestyle': '-.', 'marker': '^',  'markersize': 8, 'linewidth': 3.0, 'label': 'Oxic',             'markevery': max(1, n_steps // 10)}
@@ -368,7 +379,7 @@ def plot_shap_pdp_heatmap(shap_matrices, pdp_matrices, time_labels, gene_display
     
     x_positions = range(n_steps)
     
-    # ---- 使用 GridSpec 创建跨列子图 ----
+    # ---- Create spanning subplots with GridSpec ----
     ax_cosine = fig.add_subplot(gs[n_types, :])
     all_axes.append(ax_cosine)
     
@@ -376,14 +387,14 @@ def plot_shap_pdp_heatmap(shap_matrices, pdp_matrices, time_labels, gene_display
         shap_mat = shap_matrices[t]  # shape: (n_genes, n_steps)
         pdp_mat = pdp_matrices[t]   # shape: (n_genes, n_steps)
         
-        # 计算每个时间步的余弦相似度
+        # Compute the cosine similarity at each time step
         cosine_sims = np.zeros(n_steps)
         for step in range(n_steps):
             shap_vec = shap_mat[:, step]
             pdp_vec = pdp_mat[:, step]
             cosine_sims[step] = compute_cosine_similarity(shap_vec, pdp_vec)
         
-        # 使用不同画图方式绘制
+        # Draw with a different plotting style
         style = line_styles[t]
         ax_cosine.plot(x_positions, cosine_sims,
                        color=style['color'],
@@ -394,8 +405,8 @@ def plot_shap_pdp_heatmap(shap_matrices, pdp_matrices, time_labels, gene_display
                        label=style['label'],
                        markevery=style['markevery'])
     
-    ax_cosine.set_ylabel('Cosine Similarity', fontsize=20)  # ★ 放大 ylabel
-    ax_cosine.tick_params(axis='y', labelsize=16)  # ★ 放大 ytick
+    ax_cosine.set_ylabel('Cosine Similarity', fontsize=20)  # larger ylabel
+    ax_cosine.tick_params(axis='y', labelsize=16)  # larger ytick
     ax_cosine.set_title('SHAP vs PDP Cosine Similarity (All Reactor Types)',
                         fontsize=22, fontweight='bold', pad=10)
     ax_cosine.axhline(y=0, color='gray', linestyle='--', linewidth=1, alpha=0.7)
@@ -405,13 +416,13 @@ def plot_shap_pdp_heatmap(shap_matrices, pdp_matrices, time_labels, gene_display
     ax_cosine.legend(loc='upper right', fontsize=13, framealpha=0.9)
     ax_cosine.grid(True, alpha=0.3)
     
-    # 在最后一张子图左上角外侧添加标签 (c)
+    # Add label (c) outside the top-left corner of the last subplot
     pos = ax_cosine.get_position()
-    fig.text(pos.x0 + 0.02, pos.y1 + 0.005, '(c)',  # ★ 右移贴近图
+    fig.text(pos.x0 + 0.02, pos.y1 + 0.005, '(c)',  # moved right, closer to the figure
              transform=fig.transFigure,
              fontsize=22, fontweight='bold', va='bottom', ha='right')
 
-    # X轴：时间标签——固定显示5个关键位置
+    # X axis: time labels, always showing 5 key positions
     tick_indices = sorted(set([0, n_steps // 4, n_steps // 2, 3 * n_steps // 4, n_steps - 1]))
 
     x_tick_labels = []
@@ -422,34 +433,34 @@ def plot_shap_pdp_heatmap(shap_matrices, pdp_matrices, time_labels, gene_display
         else:
             x_tick_labels.append(str(tl)[:10])
 
-    # X轴：时间标签——只有第2、3行显示xtick（字体缩小），其他子图去掉xtick（★ 2block: 从4行改为3行）
+    # X axis: time labels; only rows 2 and 3 show xticks (smaller font), other panels hide them (2block: 4 rows became 3)
     n_total_axes = len(all_axes)
-    # 第2行是最后第3和第2个axes，第3行是最后1个axes
-    show_xtick_indices = {n_total_axes - 3, n_total_axes - 2, n_total_axes - 1}  # Row2左, Row2右, Row3
+    # Row 2 holds the last three and second-to-last axes, row 3 the last axis
+    show_xtick_indices = {n_total_axes - 3, n_total_axes - 2, n_total_axes - 1}  # Row2 left, Row2 right, Row3
     
     for ax_idx, ax in enumerate(all_axes):
         if ax_idx in show_xtick_indices:
-            # 第3、4行显示xtick，字体缩小
+            # Rows 3 and 4 show xticks with a smaller font
             ax.set_xticks(tick_indices)
             ax.set_xticklabels(x_tick_labels, rotation=30, ha='right', fontsize=12)
         else:
-            # 其他子图去掉xtick
+            # Hide the xticks of the other panels
             ax.set_xticks([])
             ax.set_xticklabels([])
 
     fig.subplots_adjust(left=0.15, right=0.92, top=0.94, bottom=0.10, hspace=0.35, wspace=0.15)
 
-    # ★ 手动缩窄前两行热力图（Row 0 和 Row 1）
-    heatmap_axes = all_axes[:4]  # 前4个 axes: Row0(SHAP,PDP), Row1(SHAP,PDP)
-    shrink_factor = 0.85  # 缩窄到原来的85%
+    # Manually narrow the first two heatmap rows (Row 0 and Row 1)
+    heatmap_axes = all_axes[:4]  # the first 4 axes: Row0(SHAP, PDP), Row1(SHAP, PDP)
+    shrink_factor = 0.85  # narrow to 85% of the original
     for ax in heatmap_axes:
         pos = ax.get_position()
         new_width = pos.width * shrink_factor
-        # 居中缩窄：左右各缩进一半
+        # Narrow the axis while keeping it centered (half the inset on each side)
         new_x0 = pos.x0 + (pos.width - new_width) / 2
         ax.set_position([new_x0, pos.y0, new_width, pos.height])
 
-    # 保存
+    # Save
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     fig.savefig(output_path, dpi=200, bbox_inches='tight')
     plt.close(fig)
@@ -457,19 +468,19 @@ def plot_shap_pdp_heatmap(shap_matrices, pdp_matrices, time_labels, gene_display
 
 
 def main():
-    """主流程"""
+    """Main workflow"""
     os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
     print("=" * 60)
     print("Trans-Learning Gene SHAP + PDP Heatmap Visualization")
     print("=" * 60)
 
-    # 1. 加载 WQ 时间序列
+    # 1. Load the WQ time series
     wq_time = load_wq_time_series(WQ_RAW_PATH)
 
-    # 2. 加载基因名称映射
+    # 2. Load the gene name mapping
     gene_name_map = load_gene_name_mapping(GENE_INFO_PATH)
 
-    # 3. 发现所有 SHAP 和 PDP 结果目录
+    # 3. Discover all SHAP and PDP result directories
     shap_dirs = discover_result_dirs(SHAP_BASE_DIR, prefix="SHAP")
     pdp_dirs = discover_result_dirs(PDP_BASE_DIR, prefix="PDP")
     
@@ -479,9 +490,9 @@ def main():
     
     if not pdp_dirs:
         print("WARNING: No PDP result directories found! Only SHAP will be plotted.")
-        pdp_dirs = shap_dirs  # 兜底：使用 SHAP 的目录结构
+        pdp_dirs = shap_dirs  # fallback: reuse the SHAP directory layout
 
-    # 4. 获取共同的 step 列表（以 SHAP 为基准，取交集）
+    # 4. Obtain the common step list (intersection, keyed on SHAP)
     shap_step_nums = set(s[0] for s in shap_dirs)
     pdp_step_nums = set(p[0] for p in pdp_dirs)
     common_step_nums = sorted(shap_step_nums & pdp_step_nums)
@@ -490,30 +501,30 @@ def main():
         print("WARNING: No common steps between SHAP and PDP! Using all SHAP steps.")
         common_step_nums = [s[0] for s in shap_dirs]
     
-    # 过滤出共同 step 的目录
+    # Keep only the directories of the shared steps
     shap_dirs_common = [(s, p) for s, p in shap_dirs if s in common_step_nums]
     pdp_dirs_common = [(s, p) for s, p in pdp_dirs if s in common_step_nums]
     
     print(f"\nCommon steps: {len(common_step_nums)} (step_{common_step_nums[0]} ~ step_{common_step_nums[-1]})")
 
-    # 5. 获取固定的基因顺序（从第一个 SHAP 结果）
+    # 5. Obtain the fixed gene order (from the first SHAP result)
     fixed_genes = get_fixed_gene_order(shap_dirs_common[0][1])
     
-    # 将基因编号转换为显示名称
+    # Convert the gene IDs to display names
     gene_display_names = [gene_name_map.get(g, g) for g in fixed_genes]
     print(f"\nGene display names (first 5): {gene_display_names[:5]}")
 
-    # 6. 为每个 step 提取对应的时间标签
+    # 6. Extract the time label of each step
     time_labels = []
     for step_num, _ in shap_dirs_common:
-        row_idx = step_num + WINDOW_SIZE - 1  # step_N → wq.iloc[N+39]
+        row_idx = step_num + WINDOW_SIZE - 1  # step_N -> wq.iloc[N+39]
         if row_idx < len(wq_time):
             time_labels.append(wq_time.iloc[row_idx])
         else:
             time_labels.append(f"N/A (idx={row_idx})")
     print(f"\nTime range: {time_labels[0]} ~ {time_labels[-1]}")
 
-    # 7. 构建 SHAP 矩阵（★ 2block: ana_ano/ox）
+    # 7. Build the SHAP matrices (2block: ana_ano/ox)
     shap_matrices = {}
     for mtype in ['ana_ano', 'ox']:
         print(f"\nBuilding SHAP matrix for '{mtype}'...")
@@ -521,7 +532,7 @@ def main():
                                        value_column='mean_abs_SHAP', prefix="SHAP")
         shap_matrices[mtype] = mat
 
-    # 8. 构建 PDP 矩阵（★ 2block: ana_ano/ox）
+    # 8. Build the PDP matrices (2block: ana_ano/ox)
     pdp_matrices = {}
     for mtype in ['ana_ano', 'ox']:
         print(f"\nBuilding PDP matrix for '{mtype}'...")
@@ -529,7 +540,7 @@ def main():
                                        value_column='mean_PDP', prefix="PDP")
         pdp_matrices[mtype] = mat
 
-    # 9. 根据 USE_NORMALIZE 开关决定是否列归一化
+    # 9. Decide on column normalization via the USE_NORMALIZE switch
     if USE_NORMALIZE:
         print("\nNormalizing values per time step...")
         shap_matrices = normalize_per_step(shap_matrices)
@@ -537,7 +548,7 @@ def main():
     else:
         print("\nSkipping per-step normalization (USE_NORMALIZE = False)")
 
-    # 10. 绘制热力图
+    # 10. Draw the heatmaps
     plot_shap_pdp_heatmap(shap_matrices, pdp_matrices, time_labels, gene_display_names,
                           OUTPUT_PATH, use_normalize=USE_NORMALIZE)
     print("\nDone!")

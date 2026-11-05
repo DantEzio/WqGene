@@ -1,3 +1,22 @@
+"""
+test_LSTM_model.py - LSTM baseline source-domain test (step1)
+=========================================================
+Purpose:
+    load the trained LSTM weights and evaluate the water-quality-only baseline on the test set:
+    1) Compute MSE / MAE / R2 for each output dim
+    2) Save the per-step test predictions as CSV for the error and Bollinger analyses in results1/2
+    3) Plot the prediction comparison figure
+Main parameters:
+    hidden_dim = 64, dropout = 0.3 (must match the weight file)
+Input:
+    model/LSTM_model/best_LSTM_model.pth
+Output:
+    results/LSTM_model/prediction.csv
+    results/LSTM_model/prediction_plot.png
+Usage:
+    cd step1_LSTM_model_trans && python test_LSTM_model.py
+"""
+
 import torch
 import pandas as pd
 import numpy as np
@@ -43,12 +62,12 @@ def test_model():
         dataset = WaterQualityDataset(wq_data, labels_dict, window_size=40)
         
         # Split dataset using same indices as train_gene_model
-        train_size = int(0.3 * len(dataset))  # 前0%-30%的数据
-        val_size = int(0.1 * len(dataset))  # 30%-35%的数据
+        train_size = int(0.3 * len(dataset))  # the first 0%-30% of the data
+        val_size = int(0.1 * len(dataset))  # the 30%-40% of the data
         
         # Test data starts from 30% of data (train_size)
         start_idx = train_size
-        test_size = len(dataset) - start_idx  # 70%的数据
+        test_size = len(dataset) - start_idx  # 70% of the data
         
         print(f"Test data size: {test_size} samples (from {start_idx+1} to {len(dataset)})")
         print(f"  Total samples: {len(dataset)}")
@@ -146,7 +165,7 @@ def test_model():
         prediction_df = pd.DataFrame(prediction_data)
         prediction_path = os.path.join(results_dir, "prediction.csv")
         prediction_df.to_csv(prediction_path, index=False)
-        print(f"✅ Predictions saved: {prediction_path}")
+        print(f"Predictions saved: {prediction_path}")
         
         # Save MSE scores
         mse_data = {
@@ -158,7 +177,7 @@ def test_model():
         mse_path = os.path.join(results_dir, "mse_scores.csv")
         try:
             mse_df.to_csv(mse_path, index=False)
-            print(f"✅ MSE scores saved: {mse_path}")
+            print(f"MSE scores saved: {mse_path}")
         except Exception as e:
             print(f"Error saving MSE scores: {e}")
 
@@ -189,11 +208,11 @@ def test_model():
             plot_path = os.path.join(results_dir, "prediction_vs_real.png")
             plt.savefig(plot_path)
             plt.close()  # Close the plot to free memory
-            print(f"✅ Plot saved: {plot_path}")
+            print(f"Plot saved: {plot_path}")
         except Exception as e:
             print(f"Error generating plot: {e}")
 
-        print("\n🎉 Test completed successfully!")
+        print("\n Test completed successfully!")
         print(f"Results summary:")
         print(f"- Model: LSTM Model (component-wise fusion)")
         print(f"- Test samples: {test_size} (from {start_idx+1} to {len(dataset)}, 30%-100% of data)")
